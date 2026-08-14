@@ -153,3 +153,35 @@ export async function createBookingApi(
 
   return response.data;
 }
+
+// Admin Bookings
+export interface BookingRecord {
+  booking_id: number;
+  booking_reference: string;
+  user_id: number;
+  flight_id: string;
+  number_of_seats: number;
+  total_price: number;
+  status: string;
+  created_at: string;
+}
+
+export interface AllBookingsResponse {
+  success: boolean;
+  bookings: BookingRecord[];
+}
+
+export async function getAllBookingsApi(
+  token: string
+): Promise<AllBookingsResponse> {
+  const response = await axios.get<AllBookingsResponse>(
+    `${API_URL}/admin/bookings`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  return response.data;
+}

@@ -5,6 +5,7 @@ from backend.database.connection import SessionLocal
 from backend.models.admin import Admin
 from backend.models.user import User
 from backend.models.flight import Flight
+from backend.models.booking import Booking
 from backend.schemas.auth import (
     AdminLoginRequest,
     TokenResponse,
@@ -88,4 +89,37 @@ def get_admin_dashboard_stats(
         "total_flights": total_flights,
         "system_status": "Healthy",
         "mcp_server": "Connected"
+    }
+
+
+@router.get("/bookings")
+def get_all_bookings(
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db)
+):
+    """
+    Admin-only endpoint. Returns all bookings sorted by created_at descending.
+    Read-only – does not modify any booking or seat data.
+    """
+    bookings = (
+        db.query(Booking)
+        .order_by(Booking.created_at.desc())
+        .all()
+    )
+
+    return {
+        "success": True,
+        "bookings": [
+            {
+                "booking_id": b.id,
+                "booking_reference": b.booking_reference,
+                "user_id": b.user_id,
+                "flight_id": b.flight_id,
+                "number_of_seats": b.number_of_seats,
+                "total_price": b.total_price,
+                "status": b.status,
+                "created_at": b.created_at.strftime("%Y-%m-%d %H:%M:%S") if b.created_at else None,
+            }
+            for b in bookings
+        ],
     }
