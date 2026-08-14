@@ -49,3 +49,22 @@ export interface SearchParameters {
   date: string;
   passengers?: number;
 }
+
+export interface BookingRequest {
+  flight_id: string;
+  number_of_seats: number;
+}
+
+export interface BookingResponse {
+  success: boolean;
+  booking_id: number;
+  booking_reference: string;
+  user_id: number;
+  flight_id: string;
+  number_of_seats: number;
+  total_price: number;
+  status: string;
+  created_at: string;
+  error?: string;
+  message?: string;
+}

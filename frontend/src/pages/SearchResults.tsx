@@ -53,7 +53,12 @@ export default function SearchResults() {
   };
 
   const handleSelectFlight = (flight: Flight) => {
-    console.log('Selected flight:', flight);
+    navigate('/booking', {
+      state: {
+        flight,
+        passengers: searchResponse?.search_parameters?.total_seats || 1,
+      },
+    });
   };
 
   return (

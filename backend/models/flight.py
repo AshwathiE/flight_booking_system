@@ -51,6 +51,12 @@ class Flight(Base):
         nullable=False
     )
 
+    total_seats = Column(
+        Integer,
+        nullable=True,
+        default=180
+    )
+
     available_seats = Column(
         Integer,
         nullable=False

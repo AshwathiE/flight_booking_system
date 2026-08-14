@@ -364,22 +364,19 @@ def parse_mcp_result(result) -> list:
         if not text or not text.strip():
             continue
 
+        if text.startswith("Error executing tool") or "Exception" in text or "error" in text.lower() and not text.startswith("{") and not text.startswith("["):
+            logger.error("MCP tool returned error string: %s", text)
+            raise RuntimeError(f"MCP tool error: {text}")
+
         try:
-
-            parsed = json.loads(
-                text
-            )
-
-        except json.JSONDecodeError as exc:
-
-            logger.error(
-                "Invalid JSON received from MCP: %s",
-                text
-            )
-
-            raise ValueError(
-                "MCP returned invalid JSON."
-            ) from exc
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            import ast
+            try:
+                parsed = ast.literal_eval(text)
+            except Exception as exc:
+                logger.error("Failed to parse MCP response as JSON or Python literal: %s", text)
+                raise ValueError(f"MCP returned invalid data format: {text}") from exc
 
         if isinstance(
             parsed,

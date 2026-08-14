@@ -4,6 +4,7 @@ import { AuthProvider } from './context/AuthContext';
 import Header from './components/Header';
 import Home from './pages/Home';
 import SearchResults from './pages/SearchResults';
+import Booking from './pages/Booking';
 import About from './pages/About';
 import Login from './pages/Login';
 import Register from './pages/Register';
@@ -23,6 +24,7 @@ export default function App() {
             <Route path="/home" element={<Home />} />
             <Route path="/results" element={<SearchResults />} />
             <Route path="/search" element={<SearchResults />} />
+            <Route path="/booking" element={<Booking />} />
             <Route path="/about" element={<About />} />
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />

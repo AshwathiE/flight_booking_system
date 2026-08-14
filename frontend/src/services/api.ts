@@ -1,5 +1,5 @@
 import axios from "axios";
-import type { SearchResponse } from "../types";
+import type { SearchResponse, BookingRequest, BookingResponse } from "../types";
 
 const API_URL = "http://127.0.0.1:8000";
 
@@ -131,6 +131,24 @@ export async function searchFlights(
   const response = await axios.post<SearchResponse>(
     `${API_URL}/ai/search_flights`,
     { message }
+  );
+
+  return response.data;
+}
+
+// Booking API
+export async function createBookingApi(
+  data: BookingRequest,
+  token: string
+): Promise<BookingResponse> {
+  const response = await axios.post<BookingResponse>(
+    `${API_URL}/bookings`,
+    data,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
   );
 
   return response.data;
