@@ -19,27 +19,30 @@ mcp = MCPServer(
 # =========================================================
 
 @mcp.tool()
-def search_flights(     ## recives parameters
+def search_flights(
     origin: str | None = "",
     destination: str | None = "",
     date: str | None = "",
     total_seats: int | None = 1,
-    travel_class: str | None = "Economy",
+    travel_class: str | None = None,
     max_price: float | None = None
 ) -> list:
 
-    origin = origin or ""    ## normalise parameter values if they are empty
+    origin = origin or ""
     destination = destination or ""
     date = date or ""
     total_seats = total_seats or 1
-    travel_class = travel_class or "Economy"
 
-    db = SessionLocal() ### creates a database session
+    # IMPORTANT:
+    # Do NOT convert None to Economy.
+    # None means the user wants all available classes.
+
+    db = SessionLocal()
 
     try:
-        repository = FlightRepository(db) ##  repo object
+        repository = FlightRepository(db)
 
-        flights = repository.search_flights(   ##databasse search happens
+        flights = repository.search_flights(
             origin=origin,
             destination=destination,
             date=date,
@@ -61,12 +64,10 @@ def search_flights(     ## recives parameters
                 "available_seats": flight.available_seats,
             }
             for flight in flights
-            if flight.available_seats >= total_seats
         ]
 
     finally:
         db.close()
-
 
 
 # =========================================================

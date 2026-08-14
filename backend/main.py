@@ -1,27 +1,57 @@
-from fastapi import FastAPI, HTTPException, Query
+from fastapi import FastAPI, HTTPException
 from pydantic import BaseModel, Field
 from typing import List
 import json
+
+from fastapi.middleware.cors import CORSMiddleware
+
 from backend.mcp_client import (
     search_flights_mcp,
     get_flight_details_mcp,
     check_availability_mcp,
-    get_fare_mcp
-
+    get_fare_mcp,
 )
-from agent.flight_agent import search_flights_with_agent
 
+from agent.flight_agent import search_flights_with_agent
+from backend.routes.user_auth import router as user_auth_router
+from backend.routes.admin_auth import router as admin_auth_router
+
+
+# =========================================================
+# FASTAPI APPLICATION
+# =========================================================
 
 app = FastAPI(
     title="Flight Booking API",
-    description="Step 1 - Basic Flight Search Backend",
+    description="Flight Booking API with MCP and AI Agent",
     version="1.0.0"
 )
 
 
-# ---------------------------------------------------------
-# REQUEST MODEL
-# ---------------------------------------------------------
+# =========================================================
+# CORS
+# =========================================================
+
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+
+# =========================================================
+# AUTH ROUTERS
+# =========================================================
+
+app.include_router(user_auth_router)
+app.include_router(admin_auth_router)
+
+
+# =========================================================
+# REQUEST MODELS
+# =========================================================
 
 class FlightSearchRequest(BaseModel):
     origin: str = Field(..., min_length=2)
@@ -31,13 +61,14 @@ class FlightSearchRequest(BaseModel):
     travel_class: str = "Economy"
     max_price: float | None = None
 
+
 class AIFlightSearchRequest(BaseModel):
     message: str
 
 
-# ---------------------------------------------------------
-# RESPONSE MODEL
-# ---------------------------------------------------------
+# =========================================================
+# RESPONSE MODELS
+# =========================================================
 
 class Flight(BaseModel):
     flight_id: str
@@ -54,9 +85,11 @@ class Flight(BaseModel):
 
 class FlightSearchResponse(BaseModel):
     flights: List[Flight]
-# ---------------------------------------------------------
+
+
+# =========================================================
 # ROOT ENDPOINT
-# ---------------------------------------------------------
+# =========================================================
 
 @app.get("/")
 def home():
@@ -65,13 +98,16 @@ def home():
     }
 
 
-# ---------------------------------------------------------
-# FLIGHT SEARCH ENDPOINT
-# ---------------------------------------------------------
-# FLIGHT SEARCH ENDPOINT
-# ---------------------------------------------------------
-@app.post("/search_flights", response_model=FlightSearchResponse)
+# =========================================================
+# FLIGHT SEARCH
+# =========================================================
+
+@app.post(
+    "/search_flights",
+    response_model=FlightSearchResponse
+)
 async def search_flights(request: FlightSearchRequest):
+
     result = await search_flights_mcp(
         origin=request.origin,
         destination=request.destination,
@@ -80,15 +116,25 @@ async def search_flights(request: FlightSearchRequest):
         travel_class=request.travel_class,
         max_price=request.max_price,
     )
+
     flights = []
+
     for content in getattr(result, "content", []):
-        if hasattr(content, "text") and content.text and content.text.strip():
+
+        if (
+            hasattr(content, "text")
+            and content.text
+            and content.text.strip()
+        ):
             try:
                 data = json.loads(content.text)
+
                 if isinstance(data, list):
                     flights.extend(data)
+
                 elif isinstance(data, dict):
                     flights.append(data)
+
             except json.JSONDecodeError:
                 continue
 
@@ -96,29 +142,70 @@ async def search_flights(request: FlightSearchRequest):
         "flights": flights
     }
 
-@app.get("/flights/{flight_id}", response_model=Flight)
+
+# =========================================================
+# FLIGHT DETAILS
+# =========================================================
+
+@app.get(
+    "/flights/{flight_id}",
+    response_model=Flight
+)
 async def get_flight_details(flight_id: str):
+
     result = await get_flight_details_mcp(flight_id)
 
     flights = []
+
     for content in getattr(result, "content", []):
-        if hasattr(content, "text") and content.text and content.text.strip():
+
+        if (
+            hasattr(content, "text")
+            and content.text
+            and content.text.strip()
+        ):
             try:
                 data = json.loads(content.text)
+
                 if isinstance(data, list):
                     flights.extend(data)
+
                 elif isinstance(data, dict):
                     flights.append(data)
+
             except json.JSONDecodeError:
                 continue
 
-    if not flights or (isinstance(flights[0], dict) and "error" in flights[0]):
-        detail = flights[0].get("error", "Flight details not found") if (flights and isinstance(flights[0], dict)) else "Flight details not found"
-        raise HTTPException(status_code=404, detail=detail)
+    if not flights or (
+        isinstance(flights[0], dict)
+        and "error" in flights[0]
+    ):
+
+        detail = (
+            flights[0].get(
+                "error",
+                "Flight details not found"
+            )
+            if flights
+            and isinstance(flights[0], dict)
+            else "Flight details not found"
+        )
+
+        raise HTTPException(
+            status_code=404,
+            detail=detail
+        )
 
     return flights[0]
 
-@app.get("/flights/{flight_id}/availability")
+
+# =========================================================
+# FLIGHT AVAILABILITY
+# =========================================================
+
+@app.get(
+    "/flights/{flight_id}/availability"
+)
 async def check_flight_availability(
     flight_id: str,
     total_seats: int = 1
@@ -130,9 +217,15 @@ async def check_flight_availability(
     )
 
     for content in getattr(result, "content", []):
-        if hasattr(content, "text") and content.text and content.text.strip():
+
+        if (
+            hasattr(content, "text")
+            and content.text
+            and content.text.strip()
+        ):
             try:
                 return json.loads(content.text)
+
             except json.JSONDecodeError:
                 continue
 
@@ -141,7 +234,13 @@ async def check_flight_availability(
     }
 
 
-@app.get("/flights/{flight_id}/fare")
+# =========================================================
+# FLIGHT FARE
+# =========================================================
+
+@app.get(
+    "/flights/{flight_id}/fare"
+)
 async def get_flight_fare(
     flight_id: str,
     total_seats: int = 1,
@@ -155,9 +254,15 @@ async def get_flight_fare(
     )
 
     for content in getattr(result, "content", []):
-        if hasattr(content, "text") and content.text and content.text.strip():
+
+        if (
+            hasattr(content, "text")
+            and content.text
+            and content.text.strip()
+        ):
             try:
                 return json.loads(content.text)
+
             except json.JSONDecodeError:
                 continue
 
@@ -165,31 +270,28 @@ async def get_flight_fare(
         "error": "No fare information returned"
     }
 
+
+# =========================================================
+# AI FLIGHT SEARCH
+# =========================================================
+
 @app.post("/ai/search_flights")
-async def ai_search_flights(request: AIFlightSearchRequest):
+async def ai_search_flights(
+    request: AIFlightSearchRequest
+):
+    """
+    AI-powered flight search endpoint.
+
+    Returns:
+    - message
+    - flights
+    - recommended_flight
+    - recommendation_reason
+    - preference
+    """
 
     result = await search_flights_with_agent(
         request.message
     )
 
-    flights = []  ## recives the mcp result
-
-    for content in getattr(result, "content", []):
-        if hasattr(content, "text") and content.text and content.text.strip():
-            try:
-                data = json.loads(content.text)
-                print("MCP RAW RESPONSE:")
-                print(repr(content.text))
-
-                if isinstance(data, list):
-                    flights.extend(data)
-                elif isinstance(data, dict):
-                    flights.append(data)
-            except json.JSONDecodeError:
-                print(f"Failed to decode JSON from content.text: {content.text!r}")
-                continue
-
-    return {
-        "user_request": request.message,
-        "flights": flights
-    }
+    return result

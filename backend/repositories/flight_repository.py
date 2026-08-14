@@ -19,7 +19,7 @@ class FlightRepository:
         origin_str = (origin or "").strip() ## input cleaning
         dest_str = (destination or "").strip()
         date_str = (date or "").strip()
-        class_str = (travel_class or "Economy").strip()
+        class_str = (travel_class or "").strip()
 
         query = self.db.query(Flight) ## start querry on the flight model
 
@@ -30,7 +30,8 @@ class FlightRepository:
         if date_str:
             query = query.filter(Flight.date == date_str)
         if class_str:
-            query = query.filter(Flight.travel_class.ilike(class_str))
+            query = query.filter(Flight.travel_class.ilike(class_str)
+    )
         if max_price is not None:
             query = query.filter(Flight.price <= max_price)
 

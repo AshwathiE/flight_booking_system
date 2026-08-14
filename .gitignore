@@ -81,6 +81,7 @@ coverage.xml
 *.sql.bak
 *.dump
 *.backup
+*.create_admin.py
 
 # =========================
 # Node / Frontend

@@ -1,11 +1,8 @@
 from backend.database.connection import engine, Base
-
-# Import models so SQLAlchemy knows about them
+from backend.models.user import User
+from backend.models.admin import Admin
 from backend.models.flight import Flight
 
-
-print("Creating database tables...")
-
+print("Creating database tables for User, Admin, Flight...")
 Base.metadata.create_all(bind=engine)
-
 print("Tables created successfully!")
