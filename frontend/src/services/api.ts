@@ -185,3 +185,101 @@ export async function getAllBookingsApi(
 
   return response.data;
 }
+
+// ── Admin Flight Management ───────────────────────────────────────────────────
+
+export interface ImportRowError {
+  row: number;
+  errors: string[];
+}
+
+export interface ImportSummary {
+  total_rows: number;
+  imported: number;
+  failed: number;
+  errors: ImportRowError[];
+}
+
+export interface ManualFlightData {
+  flight_id: string;
+  airline: string;
+  origin: string;
+  destination: string;
+  date: string;
+  departure_time: string;
+  arrival_time: string;
+  price: number;
+  travel_class: string;
+  available_seats: number;
+  total_seats?: number;
+}
+
+/**
+ * Upload a CSV file to the admin bulk-import endpoint.
+ * Returns an ImportSummary with per-row error details.
+ */
+export async function adminUploadCsvApi(
+  file: File,
+  token: string
+): Promise<ImportSummary> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await axios.post<ImportSummary>(
+    `${API_URL}/admin/flights/upload/csv`,
+    formData,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "multipart/form-data",
+      },
+    }
+  );
+
+  return response.data;
+}
+
+/**
+ * Upload an Excel file (.xlsx / .xls) to the admin bulk-import endpoint.
+ * Returns an ImportSummary with per-row error details.
+ */
+export async function adminUploadExcelApi(
+  file: File,
+  token: string
+): Promise<ImportSummary> {
+  const formData = new FormData();
+  formData.append("file", file);
+
+  const response = await axios.post<ImportSummary>(
+    `${API_URL}/admin/flights/upload/excel`,
+    formData,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "multipart/form-data",
+      },
+    }
+  );
+
+  return response.data;
+}
+
+/**
+ * Manually create a single flight via the admin endpoint.
+ */
+export async function adminCreateFlightApi(
+  data: ManualFlightData,
+  token: string
+): Promise<{ success: boolean; message: string; flight_id: string }> {
+  const response = await axios.post<{ success: boolean; message: string; flight_id: string }>(
+    `${API_URL}/admin/flights`,
+    data,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  return response.data;
+}

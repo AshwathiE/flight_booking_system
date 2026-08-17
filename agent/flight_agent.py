@@ -1,7 +1,7 @@
 import os
 import json
 import logging
-from datetime import datetime
+from datetime import datetime, date
 from typing import Optional, Literal
 
 from dotenv import load_dotenv
@@ -41,14 +41,94 @@ LLM_MODEL = "llama-3.3-70b-versatile"
 
 
 # ============================================================
-# PYDANTIC MODEL
-# LLM OUTPUT SCHEMA
+# PYDANTIC MODEL 1
+# LLM EXTRACTION MODEL
+#
+# IMPORTANT:
+# Every field is optional here.
+#
+# The LLM is ONLY responsible for extracting what the user
+# actually said.
+#
+# Python will decide whether the request is valid.
+# ============================================================
+
+class ExtractedFlightRequest(BaseModel):
+
+    origin: Optional[str] = None
+
+    destination: Optional[str] = None
+
+    date: Optional[str] = None
+
+    # Raw date expression from the user.
+    #
+    # Examples:
+    # "20 Aug"
+    # "35 Aug"
+    # "yesterday"
+    # "tomorrow"
+    #
+    # This helps Python distinguish:
+    #
+    #   no date provided
+    #
+    # from:
+    #
+    #   invalid date provided
+    #
+    date_raw: Optional[str] = None
+
+    total_seats: Optional[int] = None
+
+    travel_class: Optional[str] = None
+
+    max_price: Optional[float] = None
+
+    preference: Optional[str] = None
+
+    @field_validator("origin", "destination", mode="before")
+    @classmethod
+    def normalize_city_values(cls, value):
+
+        if value is None:
+            return None
+
+        value = str(value).strip()
+
+        if not value:
+            return None
+
+        return value
+
+    @field_validator("travel_class", mode="before")
+    @classmethod
+    def normalize_travel_class(cls, value):
+
+        if value is None:
+            return None
+
+        return str(value).strip().lower()
+
+    @field_validator("preference", mode="before")
+    @classmethod
+    def normalize_preference(cls, value):
+
+        if value is None:
+            return None
+
+        return str(value).strip().lower()
+
+
+# ============================================================
+# PYDANTIC MODEL 2
+# VALIDATED BUSINESS REQUEST
+#
+# This model is created ONLY AFTER Python has checked that
+# required information exists.
 # ============================================================
 
 class FlightSearchRequest(BaseModel):
-    """
-    Structured flight search parameters extracted by the LLM.
-    """
 
     origin: str = Field(
         ...,
@@ -69,7 +149,7 @@ class FlightSearchRequest(BaseModel):
 
     total_seats: int = Field(
         default=1,
-        ge=1,
+        ge=1
     )
 
     travel_class: Optional[
@@ -111,12 +191,14 @@ class FlightSearchRequest(BaseModel):
     def validate_date(cls, value: str) -> str:
 
         try:
+
             datetime.strptime(
                 value,
                 "%Y-%m-%d"
             )
 
         except ValueError:
+
             raise ValueError(
                 "Date must be valid YYYY-MM-DD."
             )
@@ -126,6 +208,7 @@ class FlightSearchRequest(BaseModel):
     @field_validator("travel_class", mode="before")
     @classmethod
     def normalize_travel_class(cls, value):
+
         if value is None:
             return None
 
@@ -134,49 +217,156 @@ class FlightSearchRequest(BaseModel):
 
 # ============================================================
 # LLM SYSTEM PROMPT
+#
+# IMPORTANT:
+#
+# The LLM must NOT invent missing information.
+#
+# The LLM must NOT decide whether something is valid.
+#
+# The LLM only extracts what the user said.
 # ============================================================
 
 REQUEST_SYSTEM_PROMPT = f"""
 You are a flight search parameter extraction assistant.
 
-Extract ONLY the flight search information from the user's request.
+Your ONLY job is to extract information explicitly mentioned
+by the user.
 
 Return JSON only.
 
-Required fields:
+Use exactly these fields:
 
 {{
-    "origin": "string",
-    "destination": "string",
-    "date": "YYYY-MM-DD",
-    "total_seats": 1,
+    "origin": null,
+    "destination": null,
+    "date": null,
+    "date_raw": null,
+    "total_seats": null,
     "travel_class": null,
     "max_price": null,
-    "preference": "automatic"
+    "preference": null
 }}
 
-Rules:
+IMPORTANT RULES:
 
 1. origin
+
 Extract the departure city.
 
+If the user did not provide an origin:
+
+"origin": null
+
+Do not invent an origin.
+
+
 2. destination
+
 Extract the arrival city.
 
+If the user did not provide a destination:
+
+"destination": null
+
+Do not invent a destination.
+
+
 3. date
-Convert the user's date to YYYY-MM-DD.
 
-If the year is not provided, use {PROJECT_YEAR}.
+Extract the travel date.
 
-If no date is provided, use:
-{PROJECT_YEAR}-08-15
+If the user gives a valid date and it can be converted,
+return it as:
 
-4. total_seats
-Number of passengers.
+YYYY-MM-DD
 
-If not specified, use 1.
+If the user gives a relative date such as:
 
-5. travel_class
+- today
+- tomorrow
+- yesterday
+
+convert it using the current date:
+
+{datetime.now().strftime("%Y-%m-%d")}
+
+If the user gives a date without a year,
+use year {PROJECT_YEAR}.
+
+If the user does not mention any date:
+
+"date": null
+
+If the user provides a date expression that appears invalid,
+for example:
+
+"35 Aug"
+"February 30"
+
+then:
+
+"date": null
+
+but preserve the user's expression in:
+
+"date_raw": "35 Aug"
+
+This allows Python to detect that the user supplied an invalid date.
+
+If the user does not mention a date at all:
+
+"date_raw": null
+
+
+4. date_raw
+
+Preserve the date expression used by the user.
+
+Examples:
+
+User:
+"Chennai to Delhi on 20 Aug"
+
+Return:
+
+"date_raw": "20 Aug"
+
+User:
+"Chennai to Delhi yesterday"
+
+Return:
+
+"date_raw": "yesterday"
+
+User:
+"Chennai to Delhi"
+
+Return:
+
+"date_raw": null
+
+
+5. total_seats
+
+Extract the number of passengers.
+
+Examples:
+
+"2 people" -> 2
+"for 3 passengers" -> 3
+"5 seats" -> 5
+
+If the user does not specify passengers:
+
+"total_seats": null
+
+DO NOT automatically use 1.
+
+Python will apply the default after validation.
+
+
+6. travel_class
 
 Allowed values:
 
@@ -185,18 +375,37 @@ Allowed values:
 - business
 - first class
 
-If not specified, use null.
+If not specified:
 
-6. max_price
+"travel_class": null
+
+
+7. max_price
 
 If the user specifies a maximum price,
 return the numeric value.
 
-Otherwise use null.
+Example:
 
-7. preference
+"under 5000"
 
-cheapest:
+return:
+
+5000
+
+If not specified:
+
+"max_price": null
+
+
+8. preference
+
+Use:
+
+"cheapest"
+
+for:
+
 - cheapest
 - lowest price
 - lowest fare
@@ -204,22 +413,50 @@ cheapest:
 - budget
 - affordable
 
-earliest:
+Use:
+
+"earliest"
+
+for:
+
 - earliest
 - first flight
 - early morning
 - first available
 
-fastest:
+Use:
+
+"fastest"
+
+for:
+
 - fastest
 - quickest
 - shortest
 - least travel time
 
-automatic:
-- if no preference is specified
+If no preference is specified:
 
-Do not invent information.
+"preference": null
+
+
+IMPORTANT:
+
+Do NOT validate the request.
+
+Do NOT decide whether the city exists.
+
+Do NOT decide whether flights exist.
+
+Do NOT decide whether the date is allowed.
+
+Do NOT decide whether the number of passengers is valid.
+
+Do NOT generate default values.
+
+Only extract what the user said.
+
+Return JSON only.
 """
 
 
@@ -230,15 +467,11 @@ Do not invent information.
 
 def parse_json_response(text: str) -> dict:
     """
-    Safely parse the JSON returned by the LLM.
-
-    Handles:
-    - normal JSON
-    - ```json fenced JSON
-    - ``` fenced JSON
+    Safely parse JSON returned by the LLM.
     """
 
     if not text or not text.strip():
+
         raise ValueError(
             "LLM returned an empty response."
         )
@@ -250,12 +483,15 @@ def parse_json_response(text: str) -> dict:
     # --------------------------------------------------------
 
     if text.startswith("```json"):
+
         text = text[7:]
 
     elif text.startswith("```"):
+
         text = text[3:]
 
     if text.endswith("```"):
+
         text = text[:-3]
 
     text = text.strip()
@@ -265,6 +501,7 @@ def parse_json_response(text: str) -> dict:
     # --------------------------------------------------------
 
     try:
+
         data = json.loads(text)
 
     except json.JSONDecodeError as exc:
@@ -304,39 +541,329 @@ def normalize_city(city: str) -> str:
 
 # ============================================================
 # UTILITY FUNCTION 3
-# VALIDATE BUSINESS INPUT
+# NORMALIZE EXTRACTION DATA
+#
+# This does NOT decide whether the request is valid.
+#
+# It only cleans the extracted values.
 # ============================================================
 
-def validate_search_request(
-    request: FlightSearchRequest
-) -> None:
-    """
-    Application-level validation.
+def normalize_extracted_data(
+    data: ExtractedFlightRequest
+) -> ExtractedFlightRequest:
 
-    This is separate from Pydantic schema validation.
-    """
+    if data.origin:
 
-    if (
-        request.origin.lower()
-        == request.destination.lower()
-    ):
-        raise ValueError(
-            "Origin and destination cannot be the same."
+        data.origin = normalize_city(
+            data.origin
         )
 
-    search_date = datetime.strptime(
-        request.date,
-        "%Y-%m-%d"
-    )
+    if data.destination:
 
-    if search_date.year < PROJECT_YEAR:
-        raise ValueError(
-            "Flight search date cannot be in the past."
+        data.destination = normalize_city(
+            data.destination
         )
+
+    return data
 
 
 # ============================================================
 # UTILITY FUNCTION 4
+# CHECK MISSING REQUIRED FIELDS
+#
+# Python controls this.
+# ============================================================
+
+def check_missing_fields(
+    data: ExtractedFlightRequest
+) -> Optional[dict]:
+
+    # --------------------------------------------------------
+    # Origin missing
+    # --------------------------------------------------------
+
+    if not data.origin:
+
+        return {
+            "status": "needs_information",
+            "missing_fields": ["origin"],
+            "message": (
+                "Please provide the departure city."
+            )
+        }
+
+    # --------------------------------------------------------
+    # Destination missing
+    # --------------------------------------------------------
+
+    if not data.destination:
+
+        return {
+            "status": "needs_information",
+            "missing_fields": ["destination"],
+            "message": (
+                "Please provide the destination city."
+            )
+        }
+
+    # --------------------------------------------------------
+    # Date missing
+    # --------------------------------------------------------
+
+    if not data.date:
+
+        # If date_raw exists, the user actually provided
+        # something that could not be converted into a valid date.
+        #
+        # Example:
+        #
+        # "35 Aug"
+        #
+        if data.date_raw:
+
+            return {
+                "status": "validation_error",
+                "field": "date",
+                "message": (
+                    f"Invalid travel date "
+                    f"'{data.date_raw}'. "
+                    f"Please provide a valid future date."
+                )
+            }
+
+        # No date at all.
+        return {
+            "status": "needs_information",
+            "missing_fields": ["date"],
+            "message": (
+                "Please provide the travel date."
+            )
+        }
+
+    return None
+
+
+# ============================================================
+# UTILITY FUNCTION 5
+# VALIDATE BUSINESS INPUT
+#
+# This is Python-controlled validation.
+# ============================================================
+
+def validate_search_request(
+    data: ExtractedFlightRequest
+) -> tuple[Optional[FlightSearchRequest], Optional[dict]]:
+
+    # --------------------------------------------------------
+    # Step 1
+    # Check missing fields
+    # --------------------------------------------------------
+
+    missing_result = check_missing_fields(
+        data
+    )
+
+    if missing_result:
+
+        return None, missing_result
+
+    # --------------------------------------------------------
+    # Step 2
+    # Origin and destination cannot be same
+    # --------------------------------------------------------
+
+    if (
+        data.origin.lower()
+        == data.destination.lower()
+    ):
+
+        return None, {
+            "status": "validation_error",
+            "field": "origin_destination",
+            "message": (
+                "Origin and destination cannot be the same."
+            )
+        }
+
+    # --------------------------------------------------------
+    # Step 3
+    # Validate date format
+    # --------------------------------------------------------
+
+    try:
+
+        search_date = datetime.strptime(
+            data.date,
+            "%Y-%m-%d"
+        ).date()
+
+    except ValueError:
+
+        return None, {
+            "status": "validation_error",
+            "field": "date",
+            "message": (
+                "Invalid travel date. "
+                "Please provide a valid date."
+            )
+        }
+
+    # --------------------------------------------------------
+    # Step 4
+    # Date cannot be in the past
+    # --------------------------------------------------------
+
+    today = date.today()
+
+    if search_date < today:
+
+        return None, {
+            "status": "validation_error",
+            "field": "date",
+            "message": (
+                "Travel date cannot be in the past. "
+                "Please provide today or a future date."
+            )
+        }
+
+    # --------------------------------------------------------
+    # Step 5
+    # Passenger validation
+    #
+    # IMPORTANT:
+    # If user didn't mention passengers,
+    # Python applies default = 1.
+    # --------------------------------------------------------
+
+    total_seats = data.total_seats
+
+    if total_seats is None:
+
+        total_seats = 1
+
+    elif total_seats < 1:
+
+        return None, {
+            "status": "validation_error",
+            "field": "total_seats",
+            "message": (
+                "Number of passengers must be at least 1."
+            )
+        }
+
+    # --------------------------------------------------------
+    # Step 6
+    # Maximum price validation
+    # --------------------------------------------------------
+
+    if (
+        data.max_price is not None
+        and data.max_price <= 0
+    ):
+
+        return None, {
+            "status": "validation_error",
+            "field": "max_price",
+            "message": (
+                "Maximum price must be greater than 0."
+            )
+        }
+
+    # --------------------------------------------------------
+    # Step 7
+    # Travel class validation
+    # --------------------------------------------------------
+
+    allowed_classes = {
+        "economy",
+        "premium economy",
+        "business",
+        "first class"
+    }
+
+    travel_class = data.travel_class
+
+    if travel_class:
+
+        travel_class = travel_class.strip().lower()
+
+        if travel_class not in allowed_classes:
+
+            return None, {
+                "status": "validation_error",
+                "field": "travel_class",
+                "message": (
+                    "Invalid travel class. Choose economy, "
+                    "premium economy, business, or first class."
+                )
+            }
+
+    # --------------------------------------------------------
+    # Step 8
+    # Preference validation
+    # --------------------------------------------------------
+
+    preference = data.preference
+
+    if preference is None:
+
+        preference = "automatic"
+
+    allowed_preferences = {
+        "cheapest",
+        "earliest",
+        "fastest",
+        "automatic"
+    }
+
+    if preference not in allowed_preferences:
+
+        return None, {
+            "status": "validation_error",
+            "field": "preference",
+            "message": (
+                "Invalid flight preference."
+            )
+        }
+
+    # --------------------------------------------------------
+    # Step 9
+    # Create strict business model
+    #
+    # ONLY NOW do we create FlightSearchRequest.
+    # --------------------------------------------------------
+
+    try:
+
+        request = FlightSearchRequest(
+            origin=data.origin,
+            destination=data.destination,
+            date=data.date,
+            total_seats=total_seats,
+            travel_class=travel_class,
+            max_price=data.max_price,
+            preference=preference
+        )
+
+    except ValidationError as exc:
+
+        logger.error(
+            "Validated request failed Pydantic validation: %s",
+            exc
+        )
+
+        return None, {
+            "status": "validation_error",
+            "message": (
+                "The flight search information is invalid."
+            )
+        }
+
+    return request, None
+
+
+# ============================================================
+# UTILITY FUNCTION 6
 # PARSE MCP RESULT
 # ============================================================
 
@@ -357,37 +884,72 @@ def parse_mcp_result(result) -> list:
             content,
             "text"
         ):
+
             continue
 
         text = content.text
 
         if not text or not text.strip():
+
             continue
 
-        if text.startswith("Error executing tool") or "Exception" in text or "error" in text.lower() and not text.startswith("{") and not text.startswith("["):
-            logger.error("MCP tool returned error string: %s", text)
-            raise RuntimeError(f"MCP tool error: {text}")
+        if (
+            text.startswith("Error executing tool")
+            or "Exception" in text
+            or (
+                "error" in text.lower()
+                and not text.startswith("{")
+                and not text.startswith("[")
+            )
+        ):
+
+            logger.error(
+                "MCP tool returned error string: %s",
+                text
+            )
+
+            raise RuntimeError(
+                f"MCP tool error: {text}"
+            )
 
         try:
+
             parsed = json.loads(text)
+
         except json.JSONDecodeError:
+
             import ast
+
             try:
-                parsed = ast.literal_eval(text)
+
+                parsed = ast.literal_eval(
+                    text
+                )
+
             except Exception as exc:
-                logger.error("Failed to parse MCP response as JSON or Python literal: %s", text)
-                raise ValueError(f"MCP returned invalid data format: {text}") from exc
+
+                logger.error(
+                    "Failed to parse MCP response "
+                    "as JSON or Python literal: %s",
+                    text
+                )
+
+                raise ValueError(
+                    f"MCP returned invalid data format: {text}"
+                ) from exc
 
         if isinstance(
             parsed,
             list
         ):
+
             data.extend(parsed)
 
         elif isinstance(
             parsed,
             dict
         ):
+
             data.append(parsed)
 
         else:
@@ -401,16 +963,16 @@ def parse_mcp_result(result) -> list:
 
 
 # ============================================================
-# UTILITY FUNCTION 5
+# UTILITY FUNCTION 7
 # PARSE TIME
 # ============================================================
 
-def parse_time(time_str: Optional[str]):
-    """
-    Convert HH:MM or HH:MM:SS into datetime.
-    """
+def parse_time(
+    time_str: Optional[str]
+):
 
     if not time_str:
+
         return None
 
     for fmt in (
@@ -426,13 +988,14 @@ def parse_time(time_str: Optional[str]):
             )
 
         except ValueError:
+
             continue
 
     return None
 
 
 # ============================================================
-# UTILITY FUNCTION 6
+# UTILITY FUNCTION 8
 # FLIGHT DURATION
 # ============================================================
 
@@ -454,7 +1017,11 @@ def flight_duration_minutes(
         arrival_time
     )
 
-    if departure is None or arrival is None:
+    if (
+        departure is None
+        or arrival is None
+    ):
+
         return 999999
 
     duration = (
@@ -462,6 +1029,7 @@ def flight_duration_minutes(
     ).total_seconds() / 60
 
     if duration < 0:
+
         duration += 24 * 60
 
     return int(duration)
@@ -470,11 +1038,17 @@ def flight_duration_minutes(
 # ============================================================
 # STEP 1
 # LLM UNDERSTANDS USER REQUEST
+#
+# IMPORTANT:
+#
+# The LLM only extracts information.
+#
+# Python validates it later.
 # ============================================================
 
 async def understand_flight_request(
     user_request: str
-) -> FlightSearchRequest:
+) -> ExtractedFlightRequest:
 
     if not user_request or not user_request.strip():
 
@@ -488,7 +1062,7 @@ async def understand_flight_request(
             "Flight search request is too long."
         )
 
-    user_request = user_request.strip().lower()
+    user_request = user_request.strip()
 
     logger.info(
         "Sending flight request to LLM."
@@ -507,7 +1081,7 @@ async def understand_flight_request(
                 },
                 {
                     "role": "user",
-                    "content": user_request.strip()
+                    "content": user_request
                 }
             ],
 
@@ -540,58 +1114,109 @@ async def understand_flight_request(
     )
 
     # --------------------------------------------------------
-    # PYDANTIC VALIDATION
+    # Validate only the structure of the extraction.
+    #
+    # This is NOT business validation.
     # --------------------------------------------------------
 
     try:
 
-        request_data = FlightSearchRequest(
+        extracted_data = ExtractedFlightRequest(
             **raw_data
         )
 
     except ValidationError as exc:
 
         logger.error(
-            "LLM output failed Pydantic validation: %s",
+            "LLM extraction failed schema validation: %s",
             exc
         )
 
         raise ValueError(
-            "The flight search information extracted "
-            "from the request is invalid."
+            "LLM returned invalid flight information."
         ) from exc
 
     # --------------------------------------------------------
-    # NORMALIZE
+    # Normalize extracted values
     # --------------------------------------------------------
 
-    request_data.origin = normalize_city(
-        request_data.origin
-    )
-
-    request_data.destination = normalize_city(
-        request_data.destination
-    )
-
-    # --------------------------------------------------------
-    # BUSINESS VALIDATION
-    # --------------------------------------------------------
-
-    validate_search_request(
-        request_data
+    extracted_data = normalize_extracted_data(
+        extracted_data
     )
 
     logger.info(
-        "Validated search request: %s",
-        request_data.model_dump()
+        "LLM extracted data: %s",
+        extracted_data.model_dump()
     )
 
-    return request_data
+    return extracted_data
 
 
 # ============================================================
 # STEP 2
+# VALIDATE REQUEST
+#
+# Python decides:
+#
+# - missing information
+# - invalid date
+# - past date
+# - invalid passengers
+# - invalid class
+# - invalid preference
+# - same origin/destination
+# ============================================================
+
+async def prepare_flight_request(
+    user_request: str
+):
+    """
+    LLM extraction followed by Python validation.
+    """
+
+    try:
+
+        extracted_data = await understand_flight_request(
+            user_request
+        )
+
+    except ValueError as exc:
+
+        return None, {
+            "status": "validation_error",
+            "message": str(exc)
+        }
+
+    except RuntimeError as exc:
+
+        return None, {
+            "status": "error",
+            "message": str(exc)
+        }
+
+    request_data, validation_error = (
+        validate_search_request(
+            extracted_data
+        )
+    )
+
+    if validation_error:
+
+        return None, validation_error
+
+    logger.info(
+        "Python validation successful: %s",
+        request_data.model_dump()
+    )
+
+    return request_data, None
+
+
+# ============================================================
+# STEP 3
 # CALL MCP SEARCH TOOL
+#
+# MCP is called ONLY after Python validation succeeds.
 # ============================================================
 
 async def fetch_flights_from_mcp(
@@ -642,7 +1267,7 @@ async def fetch_flights_from_mcp(
 
 
 # ============================================================
-# STEP 3
+# STEP 4
 # CHECK AVAILABILITY
 # ============================================================
 
@@ -686,13 +1311,6 @@ async def check_flight_availability(
                 "Availability MCP failed for %s.",
                 flight_id
             )
-
-            # IMPORTANT:
-            # We do not silently pretend the flight
-            # is unavailable.
-            #
-            # We fail the operation because the
-            # availability information is required.
 
             raise RuntimeError(
                 f"Unable to verify availability for flight "
@@ -764,7 +1382,7 @@ async def check_flight_availability(
 
 
 # ============================================================
-# STEP 4
+# STEP 5
 # GET FARES
 # ============================================================
 
@@ -782,10 +1400,11 @@ async def fetch_fares(
         )
 
         if not flight_id:
+
             continue
 
         # ----------------------------------------------------
-        # IMPORTANT TRAVEL CLASS LOGIC
+        # TRAVEL CLASS LOGIC
         # ----------------------------------------------------
 
         requested_class = (
@@ -797,13 +1416,12 @@ async def fetch_fares(
         )
 
         # User explicitly requested a class.
-        # We must use that class.
         if requested_class:
 
             fare_class = requested_class
 
         # User did not specify a class.
-        # Use the class returned by the database.
+        # Use database class.
         elif database_class:
 
             fare_class = database_class
@@ -905,8 +1523,10 @@ async def fetch_fares(
 
 
 # ============================================================
-# STEP 5
+# STEP 6
 # PYTHON RECOMMENDATION
+#
+# NO LLM HERE.
 # ============================================================
 
 def select_recommendation(
@@ -915,6 +1535,7 @@ def select_recommendation(
 ):
 
     if not flights:
+
         return None, None
 
     # --------------------------------------------------------
@@ -999,7 +1620,7 @@ def select_recommendation(
 
 
 # ============================================================
-# UTILITY FUNCTION 7
+# UTILITY FUNCTION 9
 # FORMAT DATE FOR DISPLAY
 # ============================================================
 
@@ -1009,12 +1630,12 @@ def format_date_display(
 
     try:
 
-        date = datetime.strptime(
+        parsed_date = datetime.strptime(
             date_str,
             "%Y-%m-%d"
         )
 
-        return date.strftime(
+        return parsed_date.strftime(
             "%d-%b-%Y"
         )
 
@@ -1024,7 +1645,7 @@ def format_date_display(
 
 
 # ============================================================
-# STEP 6
+# STEP 7
 # FORMAT RESPONSE WITHOUT LLM
 # ============================================================
 
@@ -1036,8 +1657,10 @@ def format_flight_response(
 ) -> str:
 
     origin = request_data.origin
+
     destination = request_data.destination
-    date = format_date_display(
+
+    date_display = format_date_display(
         request_data.date
     )
 
@@ -1057,7 +1680,7 @@ def format_flight_response(
         return (
             f"✈️ No flights were found from "
             f"{origin} to {destination} "
-            f"on {date} for "
+            f"on {date_display} for "
             f"{total_seats} passenger(s)."
         )
 
@@ -1073,7 +1696,7 @@ def format_flight_response(
 
         f"{origin} → {destination}",
 
-        f"Date: {date}",
+        f"Date: {date_display}",
 
         f"Passengers: {total_seats}",
 
@@ -1103,8 +1726,11 @@ def format_flight_response(
         )
 
         fare_display = (
+
             f"₹{total_fare:,.0f}"
+
             if total_fare is not None
+
             else "N/A"
         )
 
@@ -1135,8 +1761,11 @@ def format_flight_response(
         )
 
         fare_display = (
+
             f"₹{total_fare:,.0f}"
+
             if total_fare is not None
+
             else "N/A"
         )
 
@@ -1193,41 +1822,211 @@ async def search_flights_with_agent(
     )
 
     # ========================================================
-    # 1. LLM UNDERSTANDS REQUEST
+    # 1. LLM EXTRACTION
+    #
+    # LLM ONLY understands the user's request.
     # ========================================================
 
-    request_data = await understand_flight_request(
-        user_request
+    request_data, validation_error = (
+        await prepare_flight_request(
+            user_request
+        )
     )
 
     # ========================================================
-    # 2. MCP SEARCHES DATABASE
+    # 2. STOP IF PYTHON VALIDATION FAILED
+    #
+    # MCP must NOT be called.
     # ========================================================
 
-    flights = await fetch_flights_from_mcp(
-        request_data
-    )
+    if validation_error:
+
+        logger.info(
+            "Flight request rejected: %s",
+            validation_error
+        )
+
+        return {
+            "user_request": user_request,
+            **validation_error
+        }
 
     # ========================================================
-    # 3. CHECK REAL-TIME AVAILABILITY
+    # 3. MCP SEARCHES DATABASE
     # ========================================================
 
-    flights = await check_flight_availability(
-        flights,
-        request_data.total_seats
-    )
+    try:
+
+        flights = await fetch_flights_from_mcp(
+            request_data
+        )
+
+    except RuntimeError as exc:
+
+        logger.exception(
+            "Flight search failed."
+        )
+
+        return {
+            "user_request": user_request,
+            "status": "error",
+            "message": str(exc)
+        }
 
     # ========================================================
-    # 4. GET FARES
+    # 4. NO FLIGHTS FOUND
+    #
+    # This is not an LLM error.
+    #
+    # MCP/database is the source of truth.
     # ========================================================
 
-    flights = await fetch_fares(
-        flights,
-        request_data
-    )
+    if not flights:
+
+        message = (
+            f"No flights were found from "
+            f"{request_data.origin} "
+            f"to {request_data.destination} "
+            f"on "
+            f"{format_date_display(request_data.date)}."
+        )
+
+        return {
+
+            "user_request": user_request,
+
+            "status": "no_results",
+
+            "search_parameters":
+                request_data.model_dump(),
+
+            "flights": [],
+
+            "recommended_flight": None,
+
+            "recommendation_reason": None,
+
+            "message": message
+        }
 
     # ========================================================
-    # 5. PYTHON SELECTS RECOMMENDATION
+    # 5. CHECK REAL-TIME AVAILABILITY
+    # ========================================================
+
+    try:
+
+        flights = await check_flight_availability(
+            flights,
+            request_data.total_seats
+        )
+
+    except RuntimeError as exc:
+
+        logger.exception(
+            "Availability check failed."
+        )
+
+        return {
+
+            "user_request": user_request,
+
+            "status": "error",
+
+            "search_parameters":
+                request_data.model_dump(),
+
+            "message": str(exc)
+        }
+
+    # ========================================================
+    # 6. NO FLIGHTS WITH ENOUGH SEATS
+    # ========================================================
+
+    if not flights:
+
+        message = (
+            f"No available flights have enough seats "
+            f"for {request_data.total_seats} passenger(s)."
+        )
+
+        return {
+
+            "user_request": user_request,
+
+            "status": "no_availability",
+
+            "search_parameters":
+                request_data.model_dump(),
+
+            "flights": [],
+
+            "recommended_flight": None,
+
+            "recommendation_reason": None,
+
+            "message": message
+        }
+
+    # ========================================================
+    # 7. GET FARES
+    # ========================================================
+
+    try:
+
+        flights = await fetch_fares(
+            flights,
+            request_data
+        )
+
+    except RuntimeError as exc:
+
+        logger.exception(
+            "Fare calculation failed."
+        )
+
+        return {
+
+            "user_request": user_request,
+
+            "status": "error",
+
+            "search_parameters":
+                request_data.model_dump(),
+
+            "message": str(exc)
+        }
+
+    # ========================================================
+    # 8. NO VALID FARES
+    # ========================================================
+
+    if not flights:
+
+        return {
+
+            "user_request": user_request,
+
+            "status": "no_results",
+
+            "search_parameters":
+                request_data.model_dump(),
+
+            "flights": [],
+
+            "recommended_flight": None,
+
+            "recommendation_reason": None,
+
+            "message": (
+                "No flights with valid fare information "
+                "are currently available."
+            )
+        }
+
+    # ========================================================
+    # 9. PYTHON SELECTS RECOMMENDATION
+    #
+    # NO LLM.
     # ========================================================
 
     recommended_flight, recommendation_reason = (
@@ -1238,7 +2037,9 @@ async def search_flights_with_agent(
     )
 
     # ========================================================
-    # 6. PYTHON FORMATS USER RESPONSE
+    # 10. PYTHON FORMATS USER RESPONSE
+    #
+    # NO LLM.
     # ========================================================
 
     message = format_flight_response(
@@ -1253,12 +2054,14 @@ async def search_flights_with_agent(
     )
 
     # ========================================================
-    # 7. RETURN FINAL API RESPONSE
+    # 11. FINAL API RESPONSE
     # ========================================================
 
     return {
 
         "user_request": user_request,
+
+        "status": "success",
 
         "search_parameters":
             request_data.model_dump(),
