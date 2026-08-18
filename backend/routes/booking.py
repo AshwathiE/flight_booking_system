@@ -1,9 +1,13 @@
 import json
 from typing import Optional
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, status, Response
 from pydantic import BaseModel, Field
 from backend.models.user import User
+from backend.models.booking import Booking
+from backend.models.flight import Flight
+from backend.database.connection import SessionLocal
 from backend.services.auth_service import get_current_user
+from backend.utils.pdf_generator import generate_ticket_pdf
 from backend.mcp_client import (
     create_booking_mcp,
     get_booking_mcp,
@@ -151,3 +155,43 @@ async def change_booking_endpoint(
         )
         
     return result
+
+
+@router.get("/{booking_id}/ticket/pdf")
+async def get_booking_ticket_pdf(
+    booking_id: int,
+    current_user: User = Depends(get_current_user)
+):
+    """
+    Generate and stream flight ticket PDF for the logged-in user.
+    """
+    db = SessionLocal()
+    try:
+        booking = db.query(Booking).filter(Booking.id == booking_id).first()
+        if not booking:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Booking not found"
+            )
+            
+        if booking.user_id != current_user.id:
+            raise HTTPException(
+                status_code=status.HTTP_403_FORBIDDEN,
+                detail="You are not authorized to access this booking"
+            )
+            
+        flight = db.query(Flight).filter(Flight.flight_id == booking.flight_id).first()
+        if not flight:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Flight details not found for this booking"
+            )
+            
+        pdf_bytes = generate_ticket_pdf(booking, flight, current_user)
+        
+        headers = {
+            'Content-Disposition': f'attachment; filename="ticket_{booking.booking_reference}.pdf"'
+        }
+        return Response(content=pdf_bytes, media_type="application/pdf", headers=headers)
+    finally:
+        db.close()

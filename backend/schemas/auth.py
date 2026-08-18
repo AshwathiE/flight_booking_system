@@ -7,6 +7,7 @@ class RegisterRequest(BaseModel):
     name: str
     email: EmailStr
     password: str
+    mobile_number: Optional[str] = ""
 
 
 class LoginRequest(BaseModel):
@@ -19,11 +20,22 @@ class AdminLoginRequest(BaseModel):
     password: str
 
 
+from pydantic import BaseModel, ConfigDict
+
 class UserResponse(BaseModel):
     id: int
     name: str
     email: str
-    created_at: datetime
+    mobile: str | None = None
+
+    model_config = ConfigDict(from_attributes=True)
+
+
+class ProfileUpdateRequest(BaseModel):
+    name: str
+    email: EmailStr
+    mobile_number: Optional[str] = ""
+    password: Optional[str] = None
 
     class Config:
         from_attributes = True

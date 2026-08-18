@@ -154,7 +154,6 @@ def check_availability(
 # =========================================================
 # TOOL 4: GET FARE
 # =========================================================
-
 @mcp.tool()
 def get_fare(
     flight_id: str,
@@ -193,7 +192,7 @@ def get_fare(
                 "error": "Insufficient seats",
                 "flight_id": flight_id,
                 "total_seats": total_seats,
-                "available_seats": flight.available_seats>=total_seats
+                "available_seats": flight.available_seats
             }
 
         # Calculate fare
@@ -203,12 +202,17 @@ def get_fare(
 
         service_fee = 100 * total_seats
 
-        total_fare = base_fare + tax + service_fee
+        total_fare = (
+            base_fare
+            + tax
+            + service_fee
+        )
 
         return {
             "flight_id": flight_id,
             "total_seats": total_seats,
             "travel_class": travel_class,
+
             "base_fare": round(base_fare, 2),
             "tax": round(tax, 2),
             "service_fee": round(service_fee, 2),

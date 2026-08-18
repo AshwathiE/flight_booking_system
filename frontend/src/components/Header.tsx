@@ -91,6 +91,7 @@ export default function Header() {
         >
           {[
             { to: '/', icon: Search, label: 'Search Flights' },
+            ...(user ? [{ to: '/dashboard', icon: User, label: 'Dashboard' }] : []),
             { to: '/about', icon: Info, label: 'About' },
           ].map(({ to, icon: Icon, label }) => (
             <Link
@@ -142,7 +143,15 @@ export default function Header() {
         <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
           {user ? (
             <div style={{ display: 'flex', alignItems: 'center', gap: '12px' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              <Link
+                to="/dashboard"
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: '8px',
+                  textDecoration: 'none',
+                }}
+              >
                 <div
                   style={{
                     width: '34px',
@@ -167,7 +176,7 @@ export default function Header() {
                     {user.email}
                   </div>
                 </div>
-              </div>
+              </Link>
 
               <button
                 onClick={handleUserLogout}

@@ -18,6 +18,7 @@ Transaction strategy: partial import.
 import re
 from datetime import date as date_type
 from typing import Any
+from datetime import datetime, date, time
 
 from sqlalchemy.orm import Session
 
@@ -350,6 +351,57 @@ def parse_csv_bytes(content: bytes) -> tuple[list[dict], str | None]:
 # =========================================================
 # EXCEL PARSER
 # =========================================================
+def normalize_date(value) -> str:
+    """Convert Excel date/datetime values to YYYY-MM-DD."""
+    
+    if value is None:
+        return ""
+
+    if isinstance(value, datetime):
+        return value.strftime("%Y-%m-%d")
+
+    if isinstance(value, date):
+        return value.strftime("%Y-%m-%d")
+
+    value = str(value).strip()
+
+    # Handle strings such as:
+    # 2026-08-20 00:00:00
+    if " " in value:
+        value = value.split(" ")[0]
+
+    return value
+
+
+def normalize_time(value) -> str:
+    """Convert Excel time/datetime values to HH:MM."""
+    
+    if value is None:
+        return ""
+
+    if isinstance(value, datetime):
+        return value.strftime("%H:%M")
+
+    if isinstance(value, time):
+        return value.strftime("%H:%M")
+
+    value = str(value).strip()
+
+    # Handle strings such as:
+    # 06:30:00 -> 06:30
+    if len(value) >= 8 and value[2] == ":" and value[5] == ":":
+        return value[:5]
+
+    return value
+
+
+def normalize_flight_id(value) -> str:
+    """Convert flight ID to a safe string without unwanted Excel formatting."""
+    
+    if value is None:
+        return ""
+
+    return str(value).strip()
 
 def parse_excel_bytes(content: bytes, filename: str) -> tuple[list[dict], str | None]:
     """
@@ -372,33 +424,105 @@ def parse_excel_bytes(content: bytes, filename: str) -> tuple[list[dict], str | 
 
 def _parse_xlsx(content: bytes) -> tuple[list[dict], str | None]:
     import io
+
     try:
         import openpyxl
     except ImportError:
         return [], "openpyxl is not installed. Run: pip install openpyxl"
 
     try:
-        wb = openpyxl.load_workbook(io.BytesIO(content), read_only=True, data_only=True)
+        wb = openpyxl.load_workbook(
+            io.BytesIO(content),
+            read_only=True,
+            data_only=True
+        )
+
         ws = wb.active
         rows = list(ws.iter_rows(values_only=True))
+
     except Exception as e:
         return [], f"Cannot read .xlsx file: {e}"
 
     if not rows:
         return [], "Excel file is empty"
 
-    headers = [str(h).strip().lower() if h is not None else "" for h in rows[0]]
+    # ---------------------------------------------------------
+    # HEADERS
+    # ---------------------------------------------------------
+
+    headers = [
+        str(h).strip().lower() if h is not None else ""
+        for h in rows[0]
+    ]
 
     missing = REQUIRED_COLUMNS - set(headers)
+
     if missing:
-        return [], f"Excel is missing required columns: {', '.join(sorted(missing))}"
+        return [], (
+            f"Excel is missing required columns: "
+            f"{', '.join(sorted(missing))}"
+        )
+
+    # ---------------------------------------------------------
+    # DATA ROWS
+    # ---------------------------------------------------------
 
     records = []
+
     for row in rows[1:]:
-        # Skip entirely empty rows
-        if all(v is None or str(v).strip() == "" for v in row):
+
+        # Skip completely empty rows
+        if all(
+            v is None or str(v).strip() == ""
+            for v in row
+        ):
             continue
-        record = {headers[i]: (str(row[i]).strip() if row[i] is not None else "") for i in range(len(headers))}
+
+        record = {}
+
+        for i, header in enumerate(headers):
+
+            value = row[i] if i < len(row) else None
+
+            # ---------------------------------------------
+            # FLIGHT ID
+            # ---------------------------------------------
+
+            if header == "flight_id":
+                record[header] = normalize_flight_id(value)
+
+            # ---------------------------------------------
+            # DATE
+            # ---------------------------------------------
+
+            elif header == "date":
+                record[header] = normalize_date(value)
+
+            # ---------------------------------------------
+            # DEPARTURE TIME
+            # ---------------------------------------------
+
+            elif header == "departure_time":
+                record[header] = normalize_time(value)
+
+            # ---------------------------------------------
+            # ARRIVAL TIME
+            # ---------------------------------------------
+
+            elif header == "arrival_time":
+                record[header] = normalize_time(value)
+
+            # ---------------------------------------------
+            # OTHER FIELDS
+            # ---------------------------------------------
+
+            else:
+                record[header] = (
+                    str(value).strip()
+                    if value is not None
+                    else ""
+                )
+
         records.append(record)
 
     if not records:
@@ -406,9 +530,9 @@ def _parse_xlsx(content: bytes) -> tuple[list[dict], str | None]:
 
     return records, None
 
-
 def _parse_xls(content: bytes) -> tuple[list[dict], str | None]:
     import io
+
     try:
         import xlrd
     except ImportError:
@@ -417,27 +541,116 @@ def _parse_xls(content: bytes) -> tuple[list[dict], str | None]:
     try:
         wb = xlrd.open_workbook(file_contents=content)
         ws = wb.sheet_by_index(0)
+
     except Exception as e:
         return [], f"Cannot read .xls file: {e}"
 
     if ws.nrows == 0:
         return [], "Excel (.xls) file is empty"
 
-    headers = [str(ws.cell_value(0, c)).strip().lower() for c in range(ws.ncols)]
+    headers = [
+        str(ws.cell_value(0, c)).strip().lower()
+        for c in range(ws.ncols)
+    ]
 
     missing = REQUIRED_COLUMNS - set(headers)
+
     if missing:
-        return [], f"Excel (.xls) is missing required columns: {', '.join(sorted(missing))}"
+        return [], (
+            f"Excel (.xls) is missing required columns: "
+            f"{', '.join(sorted(missing))}"
+        )
 
     records = []
+
     for r_idx in range(1, ws.nrows):
-        row_values = [ws.cell_value(r_idx, c) for c in range(ws.ncols)]
+
+        row_values = [
+            ws.cell_value(r_idx, c)
+            for c in range(ws.ncols)
+        ]
+
+        # Skip empty rows
         if all(str(v).strip() == "" for v in row_values):
             continue
-        record = {headers[i]: str(row_values[i]).strip() for i in range(len(headers))}
+
+        record = {}
+
+        for i, header in enumerate(headers):
+
+            value = row_values[i]
+
+            # ---------------------------------------------
+            # FLIGHT ID
+            # ---------------------------------------------
+
+            if header == "flight_id":
+                record[header] = normalize_flight_id(value)
+
+            # ---------------------------------------------
+            # DATE
+            # ---------------------------------------------
+
+            elif header == "date":
+
+                # xlrd represents Excel dates as numbers.
+                # Convert Excel serial date to datetime first.
+                if isinstance(value, (int, float)):
+
+                    try:
+                        date_value = xlrd.xldate_as_datetime(
+                            value,
+                            wb.datemode
+                        )
+
+                        record[header] = date_value.strftime(
+                            "%Y-%m-%d"
+                        )
+
+                    except Exception:
+                        record[header] = str(value).strip()
+
+                else:
+                    record[header] = normalize_date(value)
+
+            # ---------------------------------------------
+            # DEPARTURE / ARRIVAL TIME
+            # ---------------------------------------------
+
+            elif header in ("departure_time", "arrival_time"):
+
+                if isinstance(value, (int, float)):
+
+                    # Excel stores time as fraction of a day.
+                    total_minutes = round(value * 24 * 60)
+
+                    hours = (total_minutes // 60) % 24
+                    minutes = total_minutes % 60
+
+                    record[header] = (
+                        f"{hours:02d}:{minutes:02d}"
+                    )
+
+                else:
+                    record[header] = normalize_time(value)
+
+            # ---------------------------------------------
+            # OTHER FIELDS
+            # ---------------------------------------------
+
+            else:
+                record[header] = (
+                    str(value).strip()
+                    if value is not None
+                    else ""
+                )
+
         records.append(record)
 
     if not records:
-        return [], "Excel (.xls) file contains a header but no data rows"
+        return [], (
+            "Excel (.xls) file contains a header "
+            "but no data rows"
+        )
 
     return records, None

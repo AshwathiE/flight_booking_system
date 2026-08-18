@@ -10,7 +10,15 @@ import Login from './pages/Login';
 import Register from './pages/Register';
 import AdminLogin from './pages/AdminLogin';
 import AdminDashboard from './pages/AdminDashboard';
-import { AdminProtectedRoute } from './components/ProtectedRoute';
+import { ProtectedRoute, AdminProtectedRoute } from './components/ProtectedRoute';
+
+// User Dashboard imports
+import DashboardLayout from './components/DashboardLayout';
+import DashboardHome from './pages/DashboardHome';
+import MyBookings from './pages/MyBookings';
+import Profile from './pages/Profile';
+import BookingDetails from './pages/BookingDetails';
+import ViewTicket from './pages/ViewTicket';
 
 export default function App() {
   return (
@@ -35,6 +43,57 @@ export default function App() {
                 <AdminProtectedRoute>
                   <AdminDashboard />
                 </AdminProtectedRoute>
+              }
+            />
+            {/* Protected User Dashboard routes */}
+            <Route
+              path="/dashboard"
+              element={
+                <ProtectedRoute>
+                  <DashboardLayout>
+                    <DashboardHome />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/my-bookings"
+              element={
+                <ProtectedRoute>
+                  <DashboardLayout>
+                    <MyBookings />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/profile"
+              element={
+                <ProtectedRoute>
+                  <DashboardLayout>
+                    <Profile />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/booking/:bookingId"
+              element={
+                <ProtectedRoute>
+                  <DashboardLayout>
+                    <BookingDetails />
+                  </DashboardLayout>
+                </ProtectedRoute>
+              }
+            />
+            <Route
+              path="/ticket/:bookingId"
+              element={
+                <ProtectedRoute>
+                  <DashboardLayout>
+                    <ViewTicket />
+                  </DashboardLayout>
+                </ProtectedRoute>
               }
             />
           </Routes>

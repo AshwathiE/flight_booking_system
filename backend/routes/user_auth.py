@@ -8,6 +8,7 @@ from backend.schemas.auth import (
     LoginRequest,
     TokenResponse,
     UserResponse,
+    ProfileUpdateRequest,
 )
 from backend.services.auth_service import (
     hash_password,
@@ -46,7 +47,8 @@ def register_user(
     new_user = User(
         name=request.name,
         email=request.email,
-        password_hash=hash_password(request.password)
+        password_hash=hash_password(request.password),
+        mobile_number=request.mobile_number or ""
     )
 
     db.add(new_user)
@@ -90,4 +92,33 @@ def login_user(
 def get_user_profile(
     current_user: User = Depends(get_current_user)
 ):
+    return current_user
+
+
+@router.put("/profile", response_model=UserResponse)
+def update_user_profile(
+    request: ProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    """
+    Update the logged-in user's profile details.
+    """
+    if request.email != current_user.email:
+        existing = db.query(User).filter(User.email == request.email).first()
+        if existing:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Email is already registered by another user"
+            )
+
+    current_user.name = request.name
+    current_user.email = request.email
+    current_user.mobile_number = request.mobile_number or ""
+
+    if request.password:
+        current_user.password_hash = hash_password(request.password)
+
+    db.commit()
+    db.refresh(current_user)
     return current_user

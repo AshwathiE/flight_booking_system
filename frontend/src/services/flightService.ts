@@ -1,37 +1,9 @@
-import type { Flight } from "../types";
+import type {
+  Flight,
+  SearchResponse
+} from "../types";
+
 import { searchFlights } from "./api";
-
-export interface SearchResponse {
-  status:
-  | "success"
-  | "needs_information"
-  | "validation_error"
-  | "no_results"
-  | "no_availability"
-  | "error";
-
-  message: string;
-
-  missing_fields?: string[];
-
-  field?: string;
-
-  flights?: Flight[];
-
-  recommended_flight?: Flight | null;
-
-  recommendation_reason?: string | null;
-
-  search_parameters?: {
-    origin: string;
-    destination: string;
-    date: string;
-    total_seats: number;
-    travel_class?: string | null;
-    max_price?: number | null;
-    preference?: string | null;
-  };
-}
 
 
 export async function searchFlightsService(

@@ -1,5 +1,9 @@
 from sqlalchemy.orm import Session
 from backend.models.flight import Flight
+from backend.utils.datetime_utils import (
+    get_current_date_kolkata,
+    is_flight_in_future,
+)
 
 
 class FlightRepository:
@@ -7,21 +11,32 @@ class FlightRepository:
     def __init__(self, db: Session):
         self.db = db
 
-    def search_flights( ## the function is receving search criteria from FlightMCP server
+    def search_flights(
         self,
         origin: str | None = "",
         destination: str | None = "",
         date: str | None = "",
-        travel_class: str | None = "Economy",
+        travel_class: str | None = None,
         max_price: float | None = None
     ):
-
-        origin_str = (origin or "").strip() ## input cleaning
+        origin_str = (origin or "").strip()
         dest_str = (destination or "").strip()
         date_str = (date or "").strip()
         class_str = (travel_class or "").strip()
 
-        query = self.db.query(Flight) ## start querry on the flight model
+        # If a specific date is given, verify it is not entirely in the past
+        if date_str:
+            try:
+                today_kolkata = get_current_date_kolkata()
+                from datetime import datetime
+                search_d = datetime.strptime(date_str, "%Y-%m-%d").date()
+                if search_d < today_kolkata:
+                    # Past date -> return no flights
+                    return []
+            except ValueError:
+                pass
+
+        query = self.db.query(Flight)
 
         if origin_str:
             query = query.filter(Flight.origin.ilike(origin_str))
@@ -30,50 +45,22 @@ class FlightRepository:
         if date_str:
             query = query.filter(Flight.date == date_str)
         if class_str:
-            query = query.filter(Flight.travel_class.ilike(class_str)
-    )
+            query = query.filter(Flight.travel_class.ilike(class_str))
         if max_price is not None:
             query = query.filter(Flight.price <= max_price)
 
-        return query.all()
+        all_matching = query.all()
+
+        # Filter strictly for future flights (comparing full departure datetime in Asia/Kolkata)
+        future_flights = [
+            f for f in all_matching
+            if is_flight_in_future(f.date, f.departure_time, f.flight_id)
+        ]
+
+        return future_flights
 
     def get_flight_by_id(self, flight_id: str):
-
         flight_id_str = (flight_id or "").strip()
         return self.db.query(Flight).filter(
             Flight.flight_id == flight_id_str
         ).first()
-
-
-
-def test_search_chennai_delhi():
-
-    db = SessionLocal()
-
-    try:
-        repository = FlightRepository(db)
-
-        flights = repository.search_flights(
-            origin="Chennai",
-            destination="Delhi",
-            date="2026-08-20",
-            travel_class="Economy"
-        )
-
-        print("\nFlights returned:")
-
-        for flight in flights:
-            print(
-                flight.flight_id,
-                flight.airline,
-                flight.origin,
-                flight.destination,
-                flight.date,
-                flight.travel_class,
-                flight.available_seats
-            )
-
-        assert len(flights) > 0
-
-    finally:
-        db.close()

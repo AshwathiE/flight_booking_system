@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { loginUserApi } from '../services/api';
 import { LogIn, Mail, Lock, AlertCircle } from 'lucide-react';
@@ -12,6 +12,7 @@ export default function Login() {
 
   const { loginUser } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -22,7 +23,8 @@ export default function Login() {
       const response = await loginUserApi({ email, password });
       if (response.access_token && response.user) {
         loginUser(response.access_token, response.user);
-        navigate('/');
+        const returnTo = (location.state as { returnTo?: string })?.returnTo || '/';
+        navigate(returnTo, { state: location.state });
       } else {
         setError('Login failed. Please check your credentials.');
       }
@@ -185,7 +187,7 @@ export default function Login() {
 
         <div style={{ marginTop: '24px', textAlign: 'center', fontSize: '14px', color: '#64748b' }}>
           Don't have an account?{' '}
-          <Link to="/register" style={{ color: '#0284c7', fontWeight: 600, textDecoration: 'none' }}>
+          <Link to="/register" state={location.state} style={{ color: '#0284c7', fontWeight: 600, textDecoration: 'none' }}>
             Register now
           </Link>
         </div>

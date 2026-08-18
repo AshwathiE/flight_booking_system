@@ -1,13 +1,22 @@
 import axios from "axios";
-import type { SearchResponse, BookingRequest, BookingResponse } from "../types";
+import type {
+  SearchResponse,
+  BookingRequest,
+  BookingResponse,
+} from "../types";
 
 const API_URL = "http://127.0.0.1:8000";
+
+// ── User / Admin Interfaces ──────────────────────────────────────────────────
 
 export interface UserProfile {
   id: number;
   name: string;
   email: string;
+  mobile_number?: string;
   created_at: string;
+  role: string;
+  status: string;
 }
 
 export interface AdminProfile {
@@ -34,7 +43,8 @@ export interface AdminStats {
   mcp_server: string;
 }
 
-// User Auth APIs
+// ── User Auth APIs ────────────────────────────────────────────────────────────
+
 export async function registerUserApi(
   data: {
     name: string;
@@ -79,7 +89,8 @@ export async function getUserMeApi(
   return response.data;
 }
 
-// Admin Auth APIs
+// ── Admin Auth APIs ───────────────────────────────────────────────────────────
+
 export async function loginAdminApi(
   data: {
     email: string;
@@ -124,7 +135,8 @@ export async function getAdminStatsApi(
   return response.data;
 }
 
-// Flight Search API
+// ── Flight Search API ────────────────────────────────────────────────────────
+
 export async function searchFlights(
   message: string
 ): Promise<SearchResponse> {
@@ -136,7 +148,34 @@ export async function searchFlights(
   return response.data;
 }
 
-// Booking API
+// ── Availability API ──────────────────────────────────────────────────────────
+
+export interface AvailabilityResponse {
+  flight_id: string;
+  requested_seats: number;
+  available_seats: number;
+  available: boolean;
+  error?: string;
+}
+
+export async function checkAvailabilityApi(
+  flightId: string,
+  totalSeats: number
+): Promise<AvailabilityResponse> {
+  const response = await axios.get<AvailabilityResponse>(
+    `${API_URL}/flights/${flightId}/availability`,
+    {
+      params: {
+        total_seats: totalSeats,
+      },
+    }
+  );
+
+  return response.data;
+}
+
+// ── Booking API ───────────────────────────────────────────────────────────────
+
 export async function createBookingApi(
   data: BookingRequest,
   token: string
@@ -154,7 +193,8 @@ export async function createBookingApi(
   return response.data;
 }
 
-// Admin Bookings
+// ── Admin Bookings ────────────────────────────────────────────────────────────
+
 export interface BookingRecord {
   booking_id: number;
   booking_reference: string;
@@ -186,7 +226,7 @@ export async function getAllBookingsApi(
   return response.data;
 }
 
-// ── Admin Flight Management ───────────────────────────────────────────────────
+// ── Admin Flight Management ──────────────────────────────────────────────────
 
 export interface ImportRowError {
   row: number;
@@ -216,13 +256,13 @@ export interface ManualFlightData {
 
 /**
  * Upload a CSV file to the admin bulk-import endpoint.
- * Returns an ImportSummary with per-row error details.
  */
 export async function adminUploadCsvApi(
   file: File,
   token: string
 ): Promise<ImportSummary> {
   const formData = new FormData();
+
   formData.append("file", file);
 
   const response = await axios.post<ImportSummary>(
@@ -240,14 +280,14 @@ export async function adminUploadCsvApi(
 }
 
 /**
- * Upload an Excel file (.xlsx / .xls) to the admin bulk-import endpoint.
- * Returns an ImportSummary with per-row error details.
+ * Upload an Excel file (.xlsx / .xls).
  */
 export async function adminUploadExcelApi(
   file: File,
   token: string
 ): Promise<ImportSummary> {
   const formData = new FormData();
+
   formData.append("file", file);
 
   const response = await axios.post<ImportSummary>(
@@ -265,13 +305,21 @@ export async function adminUploadExcelApi(
 }
 
 /**
- * Manually create a single flight via the admin endpoint.
+ * Manually create a single flight.
  */
 export async function adminCreateFlightApi(
   data: ManualFlightData,
   token: string
-): Promise<{ success: boolean; message: string; flight_id: string }> {
-  const response = await axios.post<{ success: boolean; message: string; flight_id: string }>(
+): Promise<{
+  success: boolean;
+  message: string;
+  flight_id: string;
+}> {
+  const response = await axios.post<{
+    success: boolean;
+    message: string;
+    flight_id: string;
+  }>(
     `${API_URL}/admin/flights`,
     data,
     {
@@ -281,5 +329,276 @@ export async function adminCreateFlightApi(
     }
   );
 
+  return response.data;
+}
+
+// ── Admin User Management ─────────────────────────────────────────────────────
+
+/**
+ * Get all registered users.
+ */
+export async function getAdminUsersApi(
+  token: string
+): Promise<UserProfile[]> {
+  const response = await axios.get<UserProfile[]>(
+    `${API_URL}/admin/users`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  return response.data;
+}
+
+/**
+ * Get a single user by ID.
+ */
+export async function getAdminUserApi(
+  userId: number,
+  token: string
+): Promise<UserProfile> {
+  const response = await axios.get<UserProfile>(
+    `${API_URL}/admin/users/${userId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  return response.data;
+}
+
+// ── Admin User Booking Management ────────────────────────────────────────────
+
+export interface UserBookingRecord {
+  booking_id: number;
+  booking_reference: string;
+  user_id: number;
+  flight_id: string;
+  number_of_seats: number;
+  total_price: number;
+  status: string;
+  created_at: string;
+}
+
+export interface UserBookingsResponse {
+  success: boolean;
+  bookings: UserBookingRecord[];
+}
+
+/**
+ * Get all bookings belonging to a specific user.
+ * Admin only.
+ */
+export async function getAdminUserBookingsApi(
+  userId: number,
+  token: string
+): Promise<UserBookingsResponse> {
+  const response = await axios.get<UserBookingsResponse>(
+    `${API_URL}/admin/users/${userId}/bookings`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  return response.data;
+}
+
+/**
+ * Update user information.
+ */
+export async function updateAdminUserApi(
+  userId: number,
+  data: {
+    name: string;
+    email: string;
+    role: string;
+  },
+  token: string
+): Promise<UserProfile> {
+  const response = await axios.put<UserProfile>(
+    `${API_URL}/admin/users/${userId}`,
+    data,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  return response.data;
+}
+
+/**
+ * Activate or deactivate a user.
+ */
+export async function updateAdminUserStatusApi(
+  userId: number,
+  status: string,
+  token: string
+): Promise<UserProfile> {
+  const response = await axios.patch<UserProfile>(
+    `${API_URL}/admin/users/${userId}/status`,
+    { status },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  return response.data;
+}
+
+/**
+ * Delete a user.
+ */
+export async function deleteAdminUserApi(
+  userId: number,
+  token: string
+): Promise<void> {
+  await axios.delete(
+    `${API_URL}/admin/users/${userId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+}
+
+// ── Admin Flight Data ─────────────────────────────────────────────────────────
+
+export interface AdminFlightRecord {
+  flight_id: string;
+  airline: string;
+  origin: string;
+  destination: string;
+  date: string;
+  departure_time: string;
+  arrival_time: string;
+  price: number;
+  travel_class: string;
+  available_seats: number;
+  total_seats: number | null;
+}
+
+export interface AdminFlightsResponse {
+  success: boolean;
+  flights: AdminFlightRecord[];
+}
+
+/**
+ * Fetch all flights stored in the database.
+ * Admin only.
+ */
+export async function getAdminFlightsApi(
+  token: string
+): Promise<AdminFlightsResponse> {
+  const response = await axios.get<AdminFlightsResponse>(
+    `${API_URL}/admin/flights`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  return response.data;
+}
+
+// ── User Dashboard API endpoints ──────────────────────────────────────────────
+
+export async function updateProfileApi(
+  data: {
+    name: string;
+    email: string;
+    mobile_number?: string;
+    password?: string;
+  },
+  token: string
+): Promise<UserProfile> {
+  const response = await axios.put<UserProfile>(
+    `${API_URL}/auth/profile`,
+    data,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+}
+
+export interface MyBookingsResponse {
+  success: boolean;
+  user_id: number;
+  count: number;
+  bookings: any[];
+}
+
+export async function getMyBookingsApi(
+  token: string
+): Promise<MyBookingsResponse> {
+  const response = await axios.get<MyBookingsResponse>(
+    `${API_URL}/bookings/my-bookings`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+}
+
+export async function getBookingDetailsApi(
+  bookingId: number,
+  token: string
+): Promise<any> {
+  const response = await axios.get<any>(
+    `${API_URL}/bookings/${bookingId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+}
+
+export async function cancelBookingApi(
+  bookingId: number,
+  token: string
+): Promise<any> {
+  const response = await axios.post<any>(
+    `${API_URL}/bookings/${bookingId}/cancel`,
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+}
+
+export async function downloadTicketPdfApi(
+  bookingId: number,
+  token: string
+): Promise<Blob> {
+  const response = await axios.get(
+    `${API_URL}/bookings/${bookingId}/ticket/pdf`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+      responseType: "blob",
+    }
+  );
   return response.data;
 }

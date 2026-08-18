@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { useNavigate, Link } from 'react-router-dom';
+import { useNavigate, useLocation, Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { registerUserApi } from '../services/api';
 import { UserPlus, User, Mail, Lock, AlertCircle } from 'lucide-react';
@@ -13,6 +13,7 @@ export default function Register() {
 
   const { loginUser } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -29,7 +30,8 @@ export default function Register() {
       const response = await registerUserApi({ name, email, password });
       if (response.access_token && response.user) {
         loginUser(response.access_token, response.user);
-        navigate('/');
+        const returnTo = (location.state as { returnTo?: string })?.returnTo || '/';
+        navigate(returnTo, { state: location.state });
       } else {
         setError('Registration failed. Please check details.');
       }
@@ -221,8 +223,8 @@ export default function Register() {
 
         <div style={{ marginTop: '24px', textAlign: 'center', fontSize: '14px', color: '#64748b' }}>
           Already have an account?{' '}
-          <Link to="/login" style={{ color: '#0284c7', fontWeight: 600, textDecoration: 'none' }}>
-            Sign In
+          <Link to="/login" state={location.state} style={{ color: '#0284c7', fontWeight: 600, textDecoration: 'none' }}>
+            Sign in
           </Link>
         </div>
       </div>

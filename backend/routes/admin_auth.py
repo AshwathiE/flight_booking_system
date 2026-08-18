@@ -200,6 +200,49 @@ class ManualFlightCreate(BaseModel):
             raise ValueError("origin and destination must not be the same")
 
 
+# ── GET /admin/flights — list all flights ────────────────
+
+@router.get(
+    "/flights",
+    summary="Admin: list all flights in the database",
+    tags=["Admin Flight Management"],
+)
+def admin_get_all_flights(
+    current_admin: Admin = Depends(get_current_admin),
+    db: Session = Depends(get_db),
+):
+    """
+    Admin-only endpoint.
+    Returns every flight record stored in the 'flights' table.
+    Does not expose any internal-only fields.
+    """
+    flights = (
+        db.query(Flight)
+        .order_by(Flight.date, Flight.departure_time)
+        .all()
+    )
+
+    return {
+        "success": True,
+        "flights": [
+            {
+                "flight_id": f.flight_id,
+                "airline": f.airline,
+                "origin": f.origin,
+                "destination": f.destination,
+                "date": str(f.date),
+                "departure_time": f.departure_time,
+                "arrival_time": f.arrival_time,
+                "price": f.price,
+                "travel_class": f.travel_class,
+                "available_seats": f.available_seats,
+                "total_seats": f.total_seats,
+            }
+            for f in flights
+        ],
+    }
+
+
 # ── POST /admin/flights — manual single flight entry ─────
 
 @router.post(

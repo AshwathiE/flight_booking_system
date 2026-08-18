@@ -6,12 +6,20 @@ import {
   adminUploadCsvApi,
   adminUploadExcelApi,
   adminCreateFlightApi,
+  getAdminUsersApi,
+  updateAdminUserStatusApi,
+  deleteAdminUserApi,
+  getAdminUserBookingsApi,
+  getAdminFlightsApi,
 } from "../services/api";
 import type {
   AdminStats,
   BookingRecord,
   ImportSummary,
   ManualFlightData,
+  UserProfile,
+  UserBookingRecord,
+  AdminFlightRecord,
 } from "../services/api";
 import { ShieldCheck, Users, Plane, Database, Server, LogOut, CheckCircle, BookOpen, Upload, PlusCircle, FileText, FileSpreadsheet, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { useNavigate } from 'react-router-dom';
@@ -32,8 +40,21 @@ export default function AdminDashboard() {
 
   // ── Flight Data Management state ─────────────────────────
   const [showFlightMgmt, setShowFlightMgmt] = useState(false);
-  // tabs: 'csv' | 'excel' | 'manual'
-  const [flightMgmtTab, setFlightMgmtTab] = useState<'csv' | 'excel' | 'manual'>('csv');
+  // tabs: 'csv' | 'excel' | 'manual' | 'flights'
+  const [flightMgmtTab, setFlightMgmtTab] = useState<'csv' | 'excel' | 'manual' | 'flights'>('csv');
+
+  // All Flights tab
+  const [allFlights, setAllFlights] = useState<AdminFlightRecord[]>([]);
+  const [loadingAllFlights, setLoadingAllFlights] = useState(false);
+  const [allFlightsError, setAllFlightsError] = useState('');
+  const [allFlightsFetched, setAllFlightsFetched] = useState(false);
+  const [flightFilterId, setFlightFilterId] = useState('');
+  const [flightFilterAirline, setFlightFilterAirline] = useState('');
+  const [flightFilterOrigin, setFlightFilterOrigin] = useState('');
+  const [flightFilterDest, setFlightFilterDest] = useState('');
+  const [flightFilterClass, setFlightFilterClass] = useState('');
+  const [flightFilterDate, setFlightFilterDate] = useState('');
+  const [flightFilterAvail, setFlightFilterAvail] = useState<'all' | 'available' | 'full'>('all');
 
   // CSV upload
   const [csvFile, setCsvFile] = useState<File | null>(null);
@@ -59,6 +80,17 @@ export default function AdminDashboard() {
   const [manualSubmitting, setManualSubmitting] = useState(false);
   const [manualSuccess, setManualSuccess] = useState('');
   const [manualError, setManualError] = useState('');
+
+  // ── User Management state ─────────────────────────────
+  const [showUsers, setShowUsers] = useState(false);
+  const [users, setUsers] = useState<UserProfile[]>([]);
+  const [loadingUsers, setLoadingUsers] = useState(false);
+  const [usersError, setUsersError] = useState('');
+  const [usersFetched, setUsersFetched] = useState(false);
+  const [selectedUser, setSelectedUser] = useState<UserProfile | null>(null);
+  const [selectedUserBookings, setSelectedUserBookings] = useState<UserBookingRecord[]>([]);
+  const [loadingSelectedUserBookings, setLoadingSelectedUserBookings] = useState(false);
+  const [selectedUserBookingsError, setSelectedUserBookingsError] = useState('');
 
   // ── Fetch dashboard stats on mount ──────────────────────
   useEffect(() => {
@@ -113,6 +145,113 @@ export default function AdminDashboard() {
   const handleRetryBookings = () => {
     setBookingsFetched(false);
     fetchBookings();
+  };
+
+
+  // ── User Management helpers ──────────────────────────────
+  const fetchUsers = async () => {
+    if (!adminToken) return;
+    setLoadingUsers(true);
+    setUsersError('');
+    try {
+      const data = await getAdminUsersApi(adminToken);
+      setUsers(data);
+      setUsersFetched(true);
+    } catch (err: any) {
+      setUsersError('Failed to load users.');
+    } finally {
+      setLoadingUsers(false);
+    }
+  };
+
+  const handleToggleUsers = () => {
+    if (showUsers) {
+      setShowUsers(false);
+    } else {
+      setShowUsers(true);
+      if (!usersFetched) {
+        fetchUsers();
+      }
+    }
+  };
+
+  const handleRetryUsers = () => {
+    setUsersFetched(false);
+    fetchUsers();
+  };
+
+  const handleToggleUserStatus = async (userId: number, currentStatus: string) => {
+    if (!adminToken) return;
+    const newStatus = currentStatus === 'active' ? 'inactive' : 'active';
+    try {
+      await updateAdminUserStatusApi(userId, newStatus, adminToken);
+      setUsers(users.map(u => u.id === userId ? { ...u, status: newStatus } : u));
+    } catch (err) {
+      alert('Failed to update user status.');
+    }
+  };
+
+  const handleDeleteUser = async (userId: number) => {
+    if (!adminToken) return;
+    if (!window.confirm('Are you sure you want to delete this user?')) return;
+    try {
+      await deleteAdminUserApi(userId, adminToken);
+      setUsers(users.filter(u => u.id !== userId));
+    } catch (err: any) {
+      const msg = err.response?.data?.detail || 'Failed to delete user.';
+      alert(msg);
+    }
+  };
+
+  // ── User booking view handlers ─────────────────────────
+  const handleViewUserBookings = async (user: UserProfile) => {
+    if (selectedUser?.id === user.id) {
+      // Toggle off — clicking same user hides the panel
+      setSelectedUser(null);
+      setSelectedUserBookings([]);
+      setSelectedUserBookingsError('');
+      return;
+    }
+    setSelectedUser(user);
+    setSelectedUserBookings([]);
+    setSelectedUserBookingsError('');
+    setLoadingSelectedUserBookings(true);
+    try {
+      if (!adminToken) return;
+      const data = await getAdminUserBookingsApi(user.id, adminToken);
+      setSelectedUserBookings(data.bookings);
+    } catch (err: any) {
+      setSelectedUserBookingsError(
+        err?.response?.data?.detail || 'Failed to load bookings for this user.'
+      );
+    } finally {
+      setLoadingSelectedUserBookings(false);
+    }
+  };
+
+  // ── All Flights handlers ─────────────────────────────────
+  const fetchAllFlights = async () => {
+    if (!adminToken) return;
+    setLoadingAllFlights(true);
+    setAllFlightsError('');
+    try {
+      const data = await getAdminFlightsApi(adminToken);
+      setAllFlights(data.flights);
+      setAllFlightsFetched(true);
+    } catch (err: any) {
+      setAllFlightsError(
+        err?.response?.data?.detail || 'Unable to load flight data.'
+      );
+    } finally {
+      setLoadingAllFlights(false);
+    }
+  };
+
+  const handleFlightMgmtTab = (tab: 'csv' | 'excel' | 'manual' | 'flights') => {
+    setFlightMgmtTab(tab);
+    if (tab === 'flights' && !allFlightsFetched) {
+      fetchAllFlights();
+    }
   };
 
   // ── Flight management handlers ───────────────────────────
@@ -385,7 +524,15 @@ export default function AdminDashboard() {
 
           <button
             id="flight-mgmt-btn"
-            onClick={() => setShowFlightMgmt(!showFlightMgmt)}
+            onClick={() => {
+              if (!showFlightMgmt) {
+                // If opening for the first time and flights tab is active, auto-fetch
+                if (flightMgmtTab === 'flights' && !allFlightsFetched) {
+                  fetchAllFlights();
+                }
+              }
+              setShowFlightMgmt(!showFlightMgmt);
+            }}
             style={{
               display: 'inline-flex',
               alignItems: 'center',
@@ -407,7 +554,257 @@ export default function AdminDashboard() {
             <Plane size={18} />
             {showFlightMgmt ? 'Hide Flight Management' : 'Flight Data Management'}
           </button>
+
+          <button
+            onClick={handleToggleUsers}
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              gap: '8px',
+              padding: '12px 24px',
+              borderRadius: '12px',
+              background: showUsers
+                ? 'linear-gradient(135deg, #db2777, #be185d)'
+                : 'linear-gradient(135deg, #f43f5e, #e11d48)',
+              border: 'none',
+              color: 'white',
+              fontWeight: 700,
+              fontSize: '15px',
+              cursor: 'pointer',
+              boxShadow: '0 4px 14px rgba(244,63,94,0.3)',
+              transition: 'all 0.2s',
+            }}
+          >
+            <Users size={18} />
+            {showUsers ? 'Hide Users' : 'User Management'}
+          </button>
+
         </div>
+
+
+        {/* ── User Management Section ── */}
+        {showUsers && (
+          <div
+            style={{
+              background: 'white',
+              borderRadius: '20px',
+              padding: '28px',
+              border: '1px solid #e2e8f0',
+              boxShadow: '0 2px 12px rgba(0,0,0,0.04)',
+              marginBottom: '32px',
+            }}
+          >
+            <h3
+              style={{
+                fontSize: '18px',
+                fontWeight: 700,
+                color: '#0f172a',
+                marginBottom: '20px',
+                display: 'flex',
+                alignItems: 'center',
+                gap: '8px',
+              }}
+            >
+              <Users size={20} color="#e11d48" />
+              User Management
+            </h3>
+
+            {loadingUsers && (
+              <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>
+                Loading users...
+              </div>
+            )}
+
+            {!loadingUsers && usersError && (
+              <div style={{ padding: '16px', background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626', borderRadius: '12px', display: 'flex', justifyContent: 'space-between' }}>
+                <span>{usersError}</span>
+                <button onClick={handleRetryUsers} style={{ padding: '6px 14px', borderRadius: '8px', background: '#dc2626', color: 'white', border: 'none', cursor: 'pointer' }}>Retry</button>
+              </div>
+            )}
+
+            {!loadingUsers && !usersError && users.length === 0 && (
+              <div style={{ padding: '32px', textAlign: 'center', color: '#64748b' }}>No users found.</div>
+            )}
+
+            {!loadingUsers && !usersError && users.length > 0 && (
+              <div style={{ overflowX: 'auto' }}>
+                <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '14px' }}>
+                  <thead>
+                    <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #e2e8f0' }}>
+                      <th style={{ padding: '12px 16px', textAlign: 'left', color: '#475569' }}>ID</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'left', color: '#475569' }}>Name</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'left', color: '#475569' }}>Email</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'left', color: '#475569' }}>Role</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'left', color: '#475569' }}>Status</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'left', color: '#475569' }}>Created</th>
+                      <th style={{ padding: '12px 16px', textAlign: 'left', color: '#475569' }}>Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {users.map((u) => {
+                      const isExpanded = selectedUser?.id === u.id;
+                      return (
+                        <React.Fragment key={u.id}>
+                          <tr
+                            style={{
+                              borderBottom: isExpanded ? 'none' : '1px solid #f1f5f9',
+                              background: isExpanded ? '#f0f7ff' : 'white',
+                              transition: 'background 0.15s',
+                            }}
+                          >
+                            <td style={{ padding: '12px 16px', color: '#94a3b8', fontWeight: 600 }}>#{u.id}</td>
+                            <td style={{ padding: '12px 16px', fontWeight: 700, color: '#0f172a' }}>{u.name}</td>
+                            <td style={{ padding: '12px 16px', color: '#475569' }}>{u.email}</td>
+                            <td style={{ padding: '12px 16px' }}>
+                              <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, background: '#e0e7ff', color: '#4338ca', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                                {u.role}
+                              </span>
+                            </td>
+                            <td style={{ padding: '12px 16px' }}>
+                              <span style={{ padding: '4px 10px', borderRadius: '20px', fontSize: '12px', fontWeight: 700, background: u.status === 'active' ? '#dcfce7' : '#fef2f2', color: u.status === 'active' ? '#16a34a' : '#dc2626' }}>
+                                {u.status}
+                              </span>
+                            </td>
+                            <td style={{ padding: '12px 16px', color: '#94a3b8', fontSize: '12px', whiteSpace: 'nowrap' }}>
+                              {u.created_at ? new Date(u.created_at).toLocaleDateString('en-IN') : '—'}
+                            </td>
+                            <td style={{ padding: '12px 16px' }}>
+                              <div style={{ display: 'flex', gap: '6px', flexWrap: 'wrap' }}>
+                                <button
+                                  onClick={() => handleViewUserBookings(u)}
+                                  style={{
+                                    padding: '6px 11px',
+                                    borderRadius: '6px',
+                                    border: 'none',
+                                    background: isExpanded ? '#dbeafe' : '#e0f2fe',
+                                    color: '#0284c7',
+                                    fontWeight: 600,
+                                    fontSize: '12px',
+                                    cursor: 'pointer',
+                                    whiteSpace: 'nowrap',
+                                  }}
+                                >
+                                  {isExpanded ? '▲ Hide Bookings' : '▼ View Bookings'}
+                                </button>
+                                <button
+                                  onClick={() => handleToggleUserStatus(u.id, u.status)}
+                                  style={{ padding: '6px 11px', borderRadius: '6px', border: '1px solid #cbd5e1', background: 'white', cursor: 'pointer', fontSize: '12px', fontWeight: 600, whiteSpace: 'nowrap' }}
+                                >
+                                  {u.status === 'active' ? 'Deactivate' : 'Activate'}
+                                </button>
+                                <button
+                                  onClick={() => handleDeleteUser(u.id)}
+                                  style={{ padding: '6px 11px', borderRadius: '6px', border: 'none', background: '#fee2e2', color: '#dc2626', cursor: 'pointer', fontSize: '12px', fontWeight: 600 }}
+                                >
+                                  Delete
+                                </button>
+                              </div>
+                            </td>
+                          </tr>
+
+                          {/* ── Inline Booking History Panel ── */}
+                          {isExpanded && (
+                            <tr>
+                              <td
+                                colSpan={7}
+                                style={{
+                                  padding: '0 0 16px 0',
+                                  background: '#f0f7ff',
+                                  borderBottom: '2px solid #bfdbfe',
+                                }}
+                              >
+                                <div style={{ padding: '16px 20px 8px 20px' }}>
+                                  {/* User detail header */}
+                                  <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                                    <div
+                                      style={{
+                                        width: '36px',
+                                        height: '36px',
+                                        borderRadius: '50%',
+                                        background: 'linear-gradient(135deg, #6366f1, #4f46e5)',
+                                        display: 'flex',
+                                        alignItems: 'center',
+                                        justifyContent: 'center',
+                                        color: 'white',
+                                        fontWeight: 800,
+                                        fontSize: '15px',
+                                        flexShrink: 0,
+                                      }}
+                                    >
+                                      {u.name.charAt(0).toUpperCase()}
+                                    </div>
+                                    <div>
+                                      <div style={{ fontWeight: 700, fontSize: '15px', color: '#0f172a' }}>{u.name}</div>
+                                      <div style={{ fontSize: '12px', color: '#64748b' }}>{u.email}</div>
+                                    </div>
+                                    <div style={{ marginLeft: 'auto', fontSize: '12px', color: '#64748b' }}>
+                                      User ID: <strong style={{ color: '#0f172a' }}>#{u.id}</strong>
+                                    </div>
+                                  </div>
+
+                                  {/* Booking history */}
+                                  {loadingSelectedUserBookings && (
+                                    <div style={{ padding: '16px', color: '#64748b', fontWeight: 500, textAlign: 'center' }}>
+                                      ⏳ Loading bookings…
+                                    </div>
+                                  )}
+
+                                  {!loadingSelectedUserBookings && selectedUserBookingsError && (
+                                    <div style={{ padding: '12px 16px', background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626', borderRadius: '10px', fontSize: '13px' }}>
+                                      {selectedUserBookingsError}
+                                    </div>
+                                  )}
+
+                                  {!loadingSelectedUserBookings && !selectedUserBookingsError && selectedUserBookings.length === 0 && (
+                                    <div style={{ padding: '16px', textAlign: 'center', color: '#94a3b8', fontSize: '14px', fontStyle: 'italic' }}>
+                                      No bookings found for this user.
+                                    </div>
+                                  )}
+
+                                  {!loadingSelectedUserBookings && !selectedUserBookingsError && selectedUserBookings.length > 0 && (
+                                    <div style={{ overflowX: 'auto' }}>
+                                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                                        <thead>
+                                          <tr style={{ background: '#dbeafe', borderBottom: '1px solid #bfdbfe' }}>
+                                            {['Reference', 'Flight', 'Seats', 'Total Price', 'Status', 'Date'].map((col) => (
+                                              <th key={col} style={{ padding: '8px 12px', textAlign: 'left', fontWeight: 700, color: '#1e40af', whiteSpace: 'nowrap' }}>
+                                                {col}
+                                              </th>
+                                            ))}
+                                          </tr>
+                                        </thead>
+                                        <tbody>
+                                          {selectedUserBookings.map((b) => (
+                                            <tr key={b.booking_id} style={{ borderBottom: '1px solid #e0f2fe' }}>
+                                              <td style={{ padding: '8px 12px', fontFamily: 'monospace', fontWeight: 700, color: '#0369a1' }}>{b.booking_reference}</td>
+                                              <td style={{ padding: '8px 12px', fontWeight: 600, color: '#0f172a' }}>{b.flight_id}</td>
+                                              <td style={{ padding: '8px 12px', color: '#334155' }}>{b.number_of_seats}</td>
+                                              <td style={{ padding: '8px 12px', fontWeight: 700, color: '#0f172a' }}>₹{b.total_price.toLocaleString('en-IN')}</td>
+                                              <td style={{ padding: '8px 12px' }}>
+                                                <span style={{ padding: '3px 8px', borderRadius: '20px', fontSize: '11px', fontWeight: 700, background: b.status === 'CONFIRMED' ? '#dcfce7' : b.status === 'CANCELLED' ? '#fef2f2' : '#f1f5f9', color: b.status === 'CONFIRMED' ? '#16a34a' : b.status === 'CANCELLED' ? '#dc2626' : '#64748b' }}>
+                                                  {b.status}
+                                                </span>
+                                              </td>
+                                              <td style={{ padding: '8px 12px', color: '#64748b', whiteSpace: 'nowrap' }}>{b.created_at}</td>
+                                            </tr>
+                                          ))}
+                                        </tbody>
+                                      </table>
+                                    </div>
+                                  )}
+                                </div>
+                              </td>
+                            </tr>
+                          )}
+                        </React.Fragment>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </div>
+        )}
 
         {/* ── Bookings Section ── */}
         {showBookings && (
@@ -650,7 +1047,7 @@ export default function AdminDashboard() {
                 <button
                   type="button"
                   id="tab-csv"
-                  onClick={() => setFlightMgmtTab('csv')}
+                  onClick={() => handleFlightMgmtTab('csv')}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -674,7 +1071,7 @@ export default function AdminDashboard() {
                 <button
                   type="button"
                   id="tab-excel"
-                  onClick={() => setFlightMgmtTab('excel')}
+                  onClick={() => handleFlightMgmtTab('excel')}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -695,10 +1092,34 @@ export default function AdminDashboard() {
                   Upload Excel (.xlsx/.xls)
                 </button>
 
+                  <button
+                    type="button"
+                    id="tab-all-flights"
+                    onClick={() => handleFlightMgmtTab('flights')}
+                    style={{
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '8px 16px',
+                      borderRadius: '8px',
+                      border: 'none',
+                      fontSize: '13px',
+                      fontWeight: 600,
+                      cursor: 'pointer',
+                      background: flightMgmtTab === 'flights' ? 'white' : 'transparent',
+                      color: flightMgmtTab === 'flights' ? '#0f172a' : '#64748b',
+                      boxShadow: flightMgmtTab === 'flights' ? '0 1px 3px rgba(0,0,0,0.1)' : 'none',
+                      transition: 'all 0.15s',
+                    }}
+                  >
+                    <Database size={16} color={flightMgmtTab === 'flights' ? '#7c3aed' : '#64748b'} />
+                    All Flights
+                  </button>
+
                 <button
                   type="button"
                   id="tab-manual"
-                  onClick={() => setFlightMgmtTab('manual')}
+                  onClick={() => handleFlightMgmtTab('manual')}
                   style={{
                     display: 'flex',
                     alignItems: 'center',
@@ -1316,6 +1737,210 @@ export default function AdminDashboard() {
                 </button>
               </form>
             )}
+
+            {/* ── TAB 4: ALL FLIGHTS ── */}
+            {flightMgmtTab === 'flights' && (() => {
+              // Client-side filtering
+              const filtered = allFlights.filter((f) => {
+                if (flightFilterId && !f.flight_id.toLowerCase().includes(flightFilterId.toLowerCase())) return false;
+                if (flightFilterAirline && !f.airline.toLowerCase().includes(flightFilterAirline.toLowerCase())) return false;
+                if (flightFilterOrigin && !f.origin.toLowerCase().includes(flightFilterOrigin.toLowerCase())) return false;
+                if (flightFilterDest && !f.destination.toLowerCase().includes(flightFilterDest.toLowerCase())) return false;
+                if (flightFilterClass && f.travel_class.toLowerCase() !== flightFilterClass.toLowerCase()) return false;
+                if (flightFilterDate && f.date !== flightFilterDate) return false;
+                if (flightFilterAvail === 'available' && (f.available_seats ?? 0) <= 0) return false;
+                if (flightFilterAvail === 'full' && (f.available_seats ?? 0) > 0) return false;
+                return true;
+              });
+
+              const hasFilter = flightFilterId || flightFilterAirline || flightFilterOrigin || flightFilterDest || flightFilterClass || flightFilterDate || flightFilterAvail !== 'all';
+
+              return (
+                <div>
+                  {/* Filter controls */}
+                  <div
+                    style={{
+                      background: '#f8fafc',
+                      border: '1px solid #e2e8f0',
+                      borderRadius: '14px',
+                      padding: '20px',
+                      marginBottom: '20px',
+                    }}
+                  >
+                    <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', marginBottom: '14px', flexWrap: 'wrap', gap: '8px' }}>
+                      <span style={{ fontWeight: 700, fontSize: '14px', color: '#0f172a' }}>🔍 Filter Flights</span>
+                      <div style={{ display: 'flex', gap: '8px' }}>
+                        {hasFilter && (
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setFlightFilterId('');
+                              setFlightFilterAirline('');
+                              setFlightFilterOrigin('');
+                              setFlightFilterDest('');
+                              setFlightFilterClass('');
+                              setFlightFilterDate('');
+                              setFlightFilterAvail('all');
+                            }}
+                            style={{ padding: '6px 14px', borderRadius: '8px', background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
+                          >
+                            ✕ Clear Filters
+                          </button>
+                        )}
+                        <button
+                          type="button"
+                          onClick={() => { setAllFlightsFetched(false); fetchAllFlights(); }}
+                          style={{ padding: '6px 14px', borderRadius: '8px', background: '#e0f2fe', border: '1px solid #bae6fd', color: '#0284c7', fontWeight: 600, fontSize: '13px', cursor: 'pointer' }}
+                        >
+                          ↺ Refresh
+                        </button>
+                      </div>
+                    </div>
+
+                    <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(160px, 1fr))', gap: '10px' }}>
+                      <input
+                        type="text"
+                        placeholder="Flight ID"
+                        value={flightFilterId}
+                        onChange={(e) => setFlightFilterId(e.target.value)}
+                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Airline"
+                        value={flightFilterAirline}
+                        onChange={(e) => setFlightFilterAirline(e.target.value)}
+                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Origin"
+                        value={flightFilterOrigin}
+                        onChange={(e) => setFlightFilterOrigin(e.target.value)}
+                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                      />
+                      <input
+                        type="text"
+                        placeholder="Destination"
+                        value={flightFilterDest}
+                        onChange={(e) => setFlightFilterDest(e.target.value)}
+                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                      />
+                      <select
+                        value={flightFilterClass}
+                        onChange={(e) => setFlightFilterClass(e.target.value)}
+                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: 'white' }}
+                      >
+                        <option value="">All Classes</option>
+                        <option value="Economy">Economy</option>
+                        <option value="Premium Economy">Premium Economy</option>
+                        <option value="Premium">Premium</option>
+                        <option value="Business">Business</option>
+                        <option value="First">First Class</option>
+                      </select>
+                      <input
+                        type="date"
+                        value={flightFilterDate}
+                        onChange={(e) => setFlightFilterDate(e.target.value)}
+                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px' }}
+                      />
+                      <select
+                        value={flightFilterAvail}
+                        onChange={(e) => setFlightFilterAvail(e.target.value as 'all' | 'available' | 'full')}
+                        style={{ padding: '8px 12px', borderRadius: '8px', border: '1px solid #cbd5e1', fontSize: '13px', background: 'white' }}
+                      >
+                        <option value="all">All Availability</option>
+                        <option value="available">Seats Available</option>
+                        <option value="full">Fully Booked</option>
+                      </select>
+                    </div>
+                  </div>
+
+                  {/* Loading */}
+                  {loadingAllFlights && (
+                    <div style={{ padding: '32px', textAlign: 'center', color: '#64748b', fontWeight: 500 }}>
+                      ⏳ Loading all flights…
+                    </div>
+                  )}
+
+                  {/* Error */}
+                  {!loadingAllFlights && allFlightsError && (
+                    <div style={{ padding: '16px', background: '#fef2f2', border: '1px solid #fecaca', color: '#dc2626', borderRadius: '12px', display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                      <span>{allFlightsError}</span>
+                      <button onClick={() => { setAllFlightsFetched(false); fetchAllFlights(); }} style={{ padding: '6px 14px', borderRadius: '8px', background: '#dc2626', color: 'white', border: 'none', cursor: 'pointer', fontWeight: 600, fontSize: '13px' }}>Retry</button>
+                    </div>
+                  )}
+
+                  {/* Empty state */}
+                  {!loadingAllFlights && !allFlightsError && allFlights.length > 0 && filtered.length === 0 && (
+                    <div style={{ padding: '32px', textAlign: 'center', color: '#64748b', fontSize: '14px' }}>
+                      No flights match the current filters.
+                    </div>
+                  )}
+
+                  {!loadingAllFlights && !allFlightsError && allFlights.length === 0 && (
+                    <div style={{ padding: '32px', textAlign: 'center', color: '#64748b', fontSize: '14px' }}>
+                      No flight data found.
+                    </div>
+                  )}
+
+                  {/* Flights count badge */}
+                  {!loadingAllFlights && !allFlightsError && filtered.length > 0 && (
+                    <div style={{ marginBottom: '12px', fontSize: '13px', color: '#64748b' }}>
+                      Showing <strong style={{ color: '#0f172a' }}>{filtered.length}</strong> of <strong style={{ color: '#0f172a' }}>{allFlights.length}</strong> flights
+                    </div>
+                  )}
+
+                  {/* Flights table */}
+                  {!loadingAllFlights && !allFlightsError && filtered.length > 0 && (
+                    <div style={{ overflowX: 'auto' }}>
+                      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '13px' }}>
+                        <thead>
+                          <tr style={{ background: '#f1f5f9', borderBottom: '2px solid #e2e8f0' }}>
+                            {['Flight ID', 'Airline', 'Route', 'Date', 'Dep.', 'Arr.', 'Class', 'Price', 'Available', 'Total'].map((col) => (
+                              <th key={col} style={{ padding: '10px 12px', textAlign: 'left', fontWeight: 700, color: '#475569', whiteSpace: 'nowrap' }}>
+                                {col}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {filtered.map((f) => (
+                            <tr
+                              key={f.flight_id}
+                              style={{ borderBottom: '1px solid #f1f5f9' }}
+                              onMouseEnter={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = '#f8fafc')}
+                              onMouseLeave={(e) => ((e.currentTarget as HTMLTableRowElement).style.background = 'transparent')}
+                            >
+                              <td style={{ padding: '10px 12px', fontWeight: 700, color: '#0f172a', fontFamily: 'monospace' }}>{f.flight_id}</td>
+                              <td style={{ padding: '10px 12px', color: '#334155', fontWeight: 600 }}>{f.airline}</td>
+                              <td style={{ padding: '10px 12px', color: '#475569', whiteSpace: 'nowrap' }}>
+                                {f.origin} → {f.destination}
+                              </td>
+                              <td style={{ padding: '10px 12px', color: '#334155', whiteSpace: 'nowrap' }}>{f.date}</td>
+                              <td style={{ padding: '10px 12px', color: '#334155', fontFamily: 'monospace' }}>{f.departure_time}</td>
+                              <td style={{ padding: '10px 12px', color: '#334155', fontFamily: 'monospace' }}>{f.arrival_time}</td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, background: '#e0f2fe', color: '#0284c7' }}>
+                                  {f.travel_class}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px 12px', fontWeight: 700, color: '#0f172a', whiteSpace: 'nowrap' }}>₹{f.price.toLocaleString('en-IN')}</td>
+                              <td style={{ padding: '10px 12px' }}>
+                                <span style={{ padding: '3px 8px', borderRadius: '6px', fontSize: '11px', fontWeight: 700, background: (f.available_seats ?? 0) > 0 ? '#dcfce7' : '#fef2f2', color: (f.available_seats ?? 0) > 0 ? '#16a34a' : '#dc2626' }}>
+                                  {f.available_seats ?? 0}
+                                </span>
+                              </td>
+                              <td style={{ padding: '10px 12px', color: '#64748b' }}>{f.total_seats ?? '—'}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+                </div>
+              );
+            })()}
           </div>
         )}
 

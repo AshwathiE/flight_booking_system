@@ -1,3 +1,4 @@
+import logging
 import random
 import string
 from datetime import datetime
@@ -5,6 +6,13 @@ from sqlalchemy.orm import Session
 from backend.models.booking import Booking
 from backend.models.flight import Flight
 from backend.models.user import User
+from backend.utils.datetime_utils import (
+    get_current_datetime_kolkata,
+    parse_flight_departure_datetime,
+    is_flight_in_future,
+)
+
+logger = logging.getLogger("booking_service")
 
 
 def generate_booking_reference(db: Session) -> str:
@@ -64,7 +72,36 @@ class BookingService:
                     "message": f"Flight {flight_id} not found."
                 }
 
-            # 3. Check seat availability and perform atomic seat deduction
+            # 3. Time validation: Ensure flight has not already departed
+            curr_dt = get_current_datetime_kolkata()
+            flight_dt = parse_flight_departure_datetime(flight.date, flight.departure_time)
+
+            logger.info(
+                "\n[BOOKING VALIDATION]\nChecking whether flight %s is still bookable...\n"
+                "[BOOKING VALIDATION]\nCurrent time: %s\n"
+                "[BOOKING VALIDATION]\nDeparture time: %s",
+                flight_id,
+                curr_dt.strftime("%Y-%m-%d %H:%M:%S%z"),
+                flight_dt.strftime("%Y-%m-%d %H:%M:%S%z") if flight_dt else "Invalid"
+            )
+
+            if not flight_dt or flight_dt <= curr_dt:
+                logger.warning(
+                    "\n[BOOKING VALIDATION]\nFlight %s departure time has passed → booking rejected",
+                    flight_id
+                )
+                return {
+                    "success": False,
+                    "error": "FLIGHT_DEPARTED",
+                    "message": f"Flight {flight_id} has already departed ({flight.date} {flight.departure_time}) and cannot be booked."
+                }
+
+            logger.info(
+                "\n[BOOKING VALIDATION]\nFlight %s is still in the future → booking allowed",
+                flight_id
+            )
+
+            # 4. Check seat availability and perform atomic seat deduction
             updated_rows = db.query(Flight).filter(
                 Flight.flight_id == flight_id,
                 Flight.available_seats >= number_of_seats
@@ -80,10 +117,10 @@ class BookingService:
                     "message": f"Only {flight.available_seats} seat(s) available."
                 }
 
-            # 4. Calculate total price
+            # 5. Calculate total price
             total_price = float(flight.price) * number_of_seats
 
-            # 5. Generate reference and create booking
+            # 6. Generate reference and create booking
             ref = generate_booking_reference(db)
 
             booking = Booking(
@@ -95,7 +132,7 @@ class BookingService:
                 status="CONFIRMED"
             )
 
-            # 6. Persist in same transaction
+            # 7. Persist in same transaction
             db.add(booking)
             db.commit()
             db.refresh(booking)
@@ -139,13 +176,22 @@ class BookingService:
                     "message": f"Booking with ID {booking_id} not found."
                 }
 
-            if requesting_user_id is not None and not is_admin:
+            # Check authorization if not admin
+            if not is_admin and requesting_user_id is not None:
                 if booking.user_id != requesting_user_id:
                     return {
                         "success": False,
-                        "error": "BOOKING_NOT_OWNED",
+                        "error": "UNAUTHORIZED",
                         "message": "You are not authorized to view this booking."
                     }
+
+            comp_status = "CANCELLED"
+            if booking.status != "CANCELLED":
+                if booking.flight:
+                    in_future = is_flight_in_future(booking.flight.date, booking.flight.departure_time)
+                    comp_status = "UPCOMING" if in_future else "COMPLETED"
+                else:
+                    comp_status = "UPCOMING"
 
             return {
                 "success": True,
@@ -156,7 +202,15 @@ class BookingService:
                 "number_of_seats": booking.number_of_seats,
                 "total_price": float(booking.total_price),
                 "status": booking.status,
-                "created_at": str(booking.created_at)
+                "computed_status": comp_status,
+                "created_at": str(booking.created_at),
+                "airline": booking.flight.airline if booking.flight else "Unknown",
+                "origin": booking.flight.origin if booking.flight else "Unknown",
+                "destination": booking.flight.destination if booking.flight else "Unknown",
+                "date": str(booking.flight.date) if booking.flight else "Unknown",
+                "departure_time": booking.flight.departure_time if booking.flight else "Unknown",
+                "arrival_time": booking.flight.arrival_time if booking.flight else "Unknown",
+                "travel_class": booking.flight.travel_class if booking.flight else "Unknown"
             }
 
         except Exception as exc:
@@ -167,33 +221,30 @@ class BookingService:
             }
 
     @staticmethod
-    def get_user_bookings(
-        db: Session,
-        user_id: int
-    ) -> dict:
+    def get_user_bookings(db: Session, user_id: int) -> dict:
         try:
-            user = db.query(User).filter(User.id == user_id).first()
-            if not user:
-                return {
-                    "success": False,
-                    "error": "USER_NOT_FOUND",
-                    "message": f"User with ID {user_id} not found."
-                }
-
-            bookings = db.query(Booking).filter(Booking.user_id == user_id).all()
-
+            bookings = db.query(Booking).filter(Booking.user_id == user_id).order_by(Booking.created_at.desc()).all()
             return {
                 "success": True,
+                "user_id": user_id,
+                "count": len(bookings),
                 "bookings": [
                     {
                         "booking_id": b.id,
                         "booking_reference": b.booking_reference,
-                        "user_id": b.user_id,
                         "flight_id": b.flight_id,
                         "number_of_seats": b.number_of_seats,
                         "total_price": float(b.total_price),
                         "status": b.status,
-                        "created_at": str(b.created_at)
+                        "computed_status": "CANCELLED" if b.status == "CANCELLED" else ("UPCOMING" if b.flight and is_flight_in_future(b.flight.date, b.flight.departure_time) else "COMPLETED"),
+                        "created_at": str(b.created_at),
+                        "airline": b.flight.airline if b.flight else "Unknown",
+                        "origin": b.flight.origin if b.flight else "Unknown",
+                        "destination": b.flight.destination if b.flight else "Unknown",
+                        "date": str(b.flight.date) if b.flight else "Unknown",
+                        "departure_time": b.flight.departure_time if b.flight else "Unknown",
+                        "arrival_time": b.flight.arrival_time if b.flight else "Unknown",
+                        "travel_class": b.flight.travel_class if b.flight else "Unknown"
                     }
                     for b in bookings
                 ]
@@ -324,6 +375,16 @@ class BookingService:
                     "success": False,
                     "error": "FLIGHT_NOT_FOUND",
                     "message": f"Target flight {new_flight_id} not found."
+                }
+
+            # Validate new flight departure time
+            curr_dt = get_current_datetime_kolkata()
+            new_flight_dt = parse_flight_departure_datetime(new_flight.date, new_flight.departure_time)
+            if not new_flight_dt or new_flight_dt <= curr_dt:
+                return {
+                    "success": False,
+                    "error": "FLIGHT_DEPARTED",
+                    "message": f"Target flight {new_flight_id} has already departed and cannot be booked."
                 }
 
             # Release seats on old flight first within transaction

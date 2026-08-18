@@ -30,8 +30,27 @@ class User(Base):
         nullable=False
     )
 
+    mobile_number = Column(
+        String(50),
+        nullable=True,
+        default="",
+        server_default=""
+    )
+
     created_at = Column(
         DateTime,
         default=datetime.utcnow,
+        nullable=False
+    )
+
+    role = Column(
+        String(50),
+        default="user",
+        nullable=False
+    )
+
+    status = Column(
+        String(50),
+        default="active",
         nullable=False
     )

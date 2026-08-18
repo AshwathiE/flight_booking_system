@@ -35,19 +35,41 @@ export interface Flight {
 }
 
 export interface SearchResponse {
-  user_request: string;
-  search_parameters: FlightSearchRequest;
-  flights: Flight[];
-  recommended_flight?: Flight;
-  recommendation_reason?: string;
+  user_request?: string;
+
+  status:
+  | "success"
+  | "needs_information"
+  | "validation_error"
+  | "no_results"
+  | "no_availability"
+  | "error";
+
+  search_parameters?: FlightSearchRequest;
+
+  flights?: Flight[];
+
+  recommended_flight?: Flight | null;
+
+  recommendation_reason?: string | null;
+
   message: string;
+
+  missing_fields?: string[];
+
+  field?: string;
 }
 
-export interface SearchParameters {
-  origin: string;
-  destination: string;
-  date: string;
-  passengers?: number;
+export interface Booking {
+  booking_id: number;
+  booking_reference: string;
+  user_id: number;
+  flight_id: string;
+  number_of_seats: number;
+  total_price: number;
+  status: string;
+  created_at: string;
+  flight?: Flight;
 }
 
 export interface BookingRequest {
