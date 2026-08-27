@@ -19,9 +19,7 @@ import re
 from datetime import date as date_type
 from typing import Any
 from datetime import datetime, date, time
-
 from sqlalchemy.orm import Session
-
 from backend.models.flight import Flight
 
 

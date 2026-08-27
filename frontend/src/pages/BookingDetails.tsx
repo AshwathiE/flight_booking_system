@@ -1,9 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
-import { getBookingDetailsApi, cancelBookingApi, downloadTicketPdfApi } from '../services/api';
+import { getBookingDetailsApi, cancelBookingApi, downloadTicketPdfApi, getPaymentByBookingApi } from '../services/api';
 import { formatDate, formatCurrency } from '../services/flightService';
-import { ArrowLeft, Ticket, FileText, Trash2, Calendar, ShieldCheck, User } from 'lucide-react';
+import { ArrowLeft, Ticket, FileText, Trash2, Calendar, ShieldCheck, User, CreditCard } from 'lucide-react';
 
 export default function BookingDetails() {
   const { bookingId } = useParams<{ bookingId: string }>();
@@ -14,6 +14,7 @@ export default function BookingDetails() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [cancelling, setCancelling] = useState(false);
+  const [paymentId, setPaymentId] = useState<string | null>(null);
 
   useEffect(() => {
     const fetchDetails = async () => {
@@ -24,6 +25,11 @@ export default function BookingDetails() {
         const data = await getBookingDetailsApi(Number(bookingId), userToken);
         if (data.success) {
           setBooking(data);
+          // Try to fetch existing payment ID for redirect
+          try {
+            const paymentData = await getPaymentByBookingApi(Number(bookingId), userToken);
+            if (paymentData && paymentData.payment_id) setPaymentId(paymentData.payment_id);
+          } catch { /* no payment yet */ }
         } else {
           setError(data.message || 'Failed to retrieve booking details.');
         }
@@ -247,9 +253,7 @@ export default function BookingDetails() {
               </div>
             </div>
           </div>
-        </div>
-
-        {/* Action Panel */}
+        </div>          {/* Action Panel */}
         <div
           style={{
             background: '#f8fafc',
@@ -261,46 +265,79 @@ export default function BookingDetails() {
             flexWrap: 'wrap',
           }}
         >
-          <Link
-            to={`/ticket/${booking.booking_id}`}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '12px 24px',
-              borderRadius: '12px',
-              border: '1.5px solid #0284c7',
-              background: 'white',
-              color: '#0284c7',
-              fontSize: '14px',
-              fontWeight: 700,
-              textDecoration: 'none',
-              cursor: 'pointer',
-            }}
-          >
-            <Ticket size={16} /> View Boarding Pass
-          </Link>
+          {/* Pay Now — visible only when payment is pending */}
+          {booking.status === 'PENDING_PAYMENT' && (
+            <button
+              onClick={() =>
+                navigate(
+                  paymentId ? `/payment/${paymentId}` : '/payment',
+                  { state: { booking } }
+                )
+              }
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '12px 24px',
+                borderRadius: '12px',
+                border: 'none',
+                background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
+                color: 'white',
+                fontSize: '14px',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              <CreditCard size={16} /> Proceed to Payment
+            </button>
+          )}
 
-          <button
-            onClick={handleDownloadTicket}
-            style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '8px',
-              padding: '12px 24px',
-              borderRadius: '12px',
-              border: 'none',
-              background: '#e0f2fe',
-              color: '#0284c7',
-              fontSize: '14px',
-              fontWeight: 700,
-              cursor: 'pointer',
-            }}
-          >
-            <FileText size={16} /> Download Ticket PDF
-          </button>
+          {/* View Boarding Pass — only after payment confirmed */}
+          {booking.ticket_download_allowed && (
+            <Link
+              to={`/ticket/${booking.booking_id}`}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '12px 24px',
+                borderRadius: '12px',
+                border: '1.5px solid #0284c7',
+                background: 'white',
+                color: '#0284c7',
+                fontSize: '14px',
+                fontWeight: 700,
+                textDecoration: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              <Ticket size={16} /> View Boarding Pass
+            </Link>
+          )}
 
-          {booking.computed_status === 'UPCOMING' && (
+          {/* Download Ticket PDF — only after payment confirmed */}
+          {booking.ticket_download_allowed && (
+            <button
+              onClick={handleDownloadTicket}
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: '8px',
+                padding: '12px 24px',
+                borderRadius: '12px',
+                border: 'none',
+                background: '#e0f2fe',
+                color: '#0284c7',
+                fontSize: '14px',
+                fontWeight: 700,
+                cursor: 'pointer',
+              }}
+            >
+              <FileText size={16} /> Download Ticket PDF
+            </button>
+          )}
+
+          {booking.computed_status === 'UPCOMING' && booking.status !== 'PENDING_PAYMENT' && (
             <button
               disabled={cancelling}
               onClick={handleCancelBooking}

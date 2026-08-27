@@ -3,16 +3,13 @@ import json
 import logging
 from datetime import datetime, timedelta
 from typing import Optional, Literal, Dict, Any, Tuple
-
 from dotenv import load_dotenv
 from groq import AsyncGroq
 from pydantic import BaseModel, Field, ValidationError, field_validator
-
 from backend.utils.datetime_utils import (
     get_current_date_kolkata,
     get_current_datetime_kolkata,
 )
-
 from backend.mcp_client import (
     search_flights_mcp,
     get_flight_details_mcp,
@@ -23,53 +20,67 @@ from backend.mcp_client import (
     get_user_bookings_mcp,
     cancel_booking_mcp,
     change_booking_mcp,
+    create_payment_mcp,
+    process_payment_mcp,
+    verify_payment_mcp,
+    get_payment_mcp,
+    get_payment_by_booking_mcp,
+    refund_payment_mcp,
+    discover_payment_tools,
+    discover_flight_tools,
+    discover_booking_tools,
+    discover_all_tools,
+    PAYMENT_MCP_SERVER_URL,
+    MCP_SERVERS,
 )
-
-
 # ============================================================
 # CONFIGURATION
 # ============================================================
-
 load_dotenv()
-
 PROJECT_YEAR = 2026
 LLM_MODEL = "openai/gpt-oss-120b"
-
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
-
 if not GROQ_API_KEY:
     raise RuntimeError(
         "GROQ_API_KEY is not configured. "
         "Please add GROQ_API_KEY to your .env file."
     )
-
 client = AsyncGroq(api_key=GROQ_API_KEY)
-
-
 # ============================================================
 # LOGGING
 # ============================================================
-
 logger = logging.getLogger("flight_agent")
 logger.setLevel(logging.INFO)
-
 if not logger.handlers:
     console_handler = logging.StreamHandler()
     console_handler.setLevel(logging.INFO)
-
     formatter = logging.Formatter(
         fmt="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
         datefmt="%Y-%m-%d %H:%M:%S",
     )
-
     console_handler.setFormatter(formatter)
     logger.addHandler(console_handler)
-
-
+# ============================================================
+# MCP STARTUP VALIDATION
+# ============================================================
+async def validate_payment_mcp_startup() -> bool:
+    """
+    Validate Payment MCP Server connection and discover its tools.
+    """
+    logger.info("Connecting to Payment MCP Server at %s...", PAYMENT_MCP_SERVER_URL)
+    try:
+        tools = await discover_payment_tools()
+        logger.info("Connected to Payment MCP Server successfully!")
+        logger.info("Payment MCP tools discovered:")
+        for tool in tools:
+            logger.info("  - %s", tool)
+        return True
+    except Exception as exc:
+        logger.error("❌ Failed to connect to Payment MCP Server: %s", exc)
+        return False
 # ============================================================
 # MCP TOOL WHITELIST
 # ============================================================
-
 ALLOWED_TOOLS = {
     "search_flights",
     "get_flight_details",
@@ -80,13 +91,16 @@ ALLOWED_TOOLS = {
     "get_user_bookings",
     "cancel_booking",
     "change_booking",
+    "create_payment",
+    "process_payment",
+    "verify_payment",
+    "get_payment",
+    "get_payment_by_booking",
+    "refund_payment",
 }
-
-
 # ============================================================
 # MCP TOOL DISPATCH MAP
 # ============================================================
-
 TOOL_MAP = {
     "search_flights": search_flights_mcp,
     "get_flight_details": get_flight_details_mcp,
@@ -97,14 +111,17 @@ TOOL_MAP = {
     "get_user_bookings": get_user_bookings_mcp,
     "cancel_booking": cancel_booking_mcp,
     "change_booking": change_booking_mcp,
+    "create_payment": create_payment_mcp,
+    "process_payment": process_payment_mcp,
+    "verify_payment": verify_payment_mcp,
+    "get_payment": get_payment_mcp,
+    "get_payment_by_booking": get_payment_by_booking_mcp,
+    "refund_payment": refund_payment_mcp,
 }
-
-
 # ============================================================
 # PYDANTIC MODEL
 # LLM AGENT DECISION
 # ============================================================
-
 class AgentDecision(BaseModel):
     intent: Literal[
         "SEARCH_FLIGHTS",
@@ -116,42 +133,39 @@ class AgentDecision(BaseModel):
         "GET_USER_BOOKINGS",
         "CANCEL_BOOKING",
         "CHANGE_BOOKING",
+        "CREATE_PAYMENT",
+        "PROCESS_PAYMENT",
+        "VERIFY_PAYMENT",
+        "GET_PAYMENT",
+        "GET_PAYMENT_BY_BOOKING",
+        "REFUND_PAYMENT",
         "UNKNOWN",
     ]
-
     tool: Optional[str] = None
-
     parameters: Dict[str, Any] = Field(default_factory=dict)
-
-
 # ============================================================
 # PYDANTIC MODEL
 # VALIDATED FLIGHT SEARCH REQUEST
 # ============================================================
-
 class FlightSearchRequest(BaseModel):
     origin: str = Field(
         ...,
         min_length=2,
         max_length=100,
     )
-
     destination: str = Field(
         ...,
         min_length=2,
         max_length=100,
     )
-
     date: str = Field(
         ...,
         pattern=r"^\d{4}-\d{2}-\d{2}$",
     )
-
     total_seats: int = Field(
         default=1,
         ge=1,
     )
-
     travel_class: Optional[
         Literal[
             "economy",
@@ -160,12 +174,10 @@ class FlightSearchRequest(BaseModel):
             "first class",
         ]
     ] = None
-
     max_price: Optional[float] = Field(
         default=None,
         gt=0,
     )
-
     preference: Literal[
         "cheapest",
         "earliest",
@@ -182,7 +194,6 @@ class FlightSearchRequest(BaseModel):
             raise ValueError("City cannot be empty.")
 
         return value
-
     @field_validator("date")
     @classmethod
     def validate_date(cls, value: str) -> str:
@@ -192,9 +203,7 @@ class FlightSearchRequest(BaseModel):
             raise ValueError(
                 "Date must be valid YYYY-MM-DD."
             )
-
         return value
-
     @field_validator("travel_class", mode="before")
     @classmethod
     def normalize_travel_class(cls, value):
@@ -202,297 +211,205 @@ class FlightSearchRequest(BaseModel):
             return None
 
         return str(value).strip().lower()
-
-
 # ============================================================
 # LLM SYSTEM PROMPT
 # ============================================================
-
 CURRENT_DATE = get_current_date_kolkata()
-
 AGENT_SYSTEM_PROMPT = f"""
 You are the Flight Booking AI Agent.
+Your job is to understand the user's request and select exactly ONE
+appropriate tool.
+Never access the database directly.
+Never generate SQL.
+Never invent booking IDs, payment IDs, prices, payment status,
+transaction IDs, or flight information.
+MCP tool results are the source of truth.
+AVAILABLE TOOLS
+Flight:
+- search_flights
+- get_flight_details
+- check_availability
+- get_fare
+Booking:
+- create_booking
+- get_booking
+- get_user_bookings
+- cancel_booking
+- change_booking
+Payment:
+- create_payment
+- process_payment
+- verify_payment
+- get_payment
+- get_payment_by_booking
+- refund_payment
+INTENTS
+SEARCH_FLIGHTS
+GET_FLIGHT_DETAILS
+CHECK_AVAILABILITY
+GET_FARE
+CREATE_BOOKING
+GET_BOOKING
+GET_USER_BOOKINGS
+CANCEL_BOOKING
+CHANGE_BOOKING
+CREATE_PAYMENT
+PROCESS_PAYMENT
+VERIFY_PAYMENT
+GET_PAYMENT
+GET_PAYMENT_BY_BOOKING
+REFUND_PAYMENT
+UNKNOWN
+CURRENT DATE
+Today is {CURRENT_DATE}.
+Use this date when interpreting relative dates such as:
+- today
+- tomorrow
+- day after tomorrow
+- next Monday
+- this weekend
+Never select or return flights from the past.
+IMPORTANT PAYMENT RULES
+1. The user never provides the payment amount.
+2. Never generate an amount.
+3. The payment amount must always come from the booking's
+   total_price through the Payment MCP Server.
+4. The user may choose:
+   - UPI
+   - CARD
+   - NET_BANKING
 
-Your responsibility is to understand the user's natural language request,
-identify the user's intent, select exactly one appropriate tool from the
-allowed flight-booking tools, and extract the parameters required by that tool.
+5. When the user says:
+   "pay for booking 65 using card"
+    return:
+   {{
+     "intent": "CREATE_PAYMENT",
+     "tool": "create_payment",
+     "parameters": {{
+       "booking_id": 65,
+       "payment_method": "CARD"
+     }}
+   }}
+6. When the user says:
+   "pay for booking 65"
+   return:
+   {{
+     "intent": "CREATE_PAYMENT",
+     "tool": "create_payment",
+     "parameters": {{
+       "booking_id": 65
+     }}
+   }}
+7. When the user says:
+   "pay using card"
+   return:
+   {{
+     "intent": "CREATE_PAYMENT",
+     "tool": "create_payment",
+     "parameters": {{
+       "payment_method": "CARD"
+     }}
+   }}
 
-You must not access databases directly.
-You must not generate SQL.
-You must not invent flights, prices, availability, bookings, or payment information.
-You must not execute tools yourself.
-You must only return a structured tool decision as valid JSON.
+8. Never generate a payment_id.
 
-Available tools are:
+9. Never generate a transaction_id.
 
-- search_flights:
-  Search for flights between cities on a date.
-  Optional:
-  total_seats, travel_class, max_price, preference
+10. Never generate a refund_id.
 
-- get_flight_details:
-  Retrieve complete details for a specific flight.
-  Parameter:
-  flight_id
+11. Never generate a payment amount.
 
-- check_availability:
-  Check seat availability on a flight.
-  Parameters:
-  flight_id, total_seats
+12. Never claim that payment succeeded unless the Payment MCP Server
+    returns a successful payment result.
 
-- get_fare:
-  Calculate fare and pricing for a flight.
-  Parameters:
-  flight_id, total_seats, travel_class
+13. If create_payment returns a payment_id, that payment_id must come
+    from the MCP Server.
 
-- create_booking:
-  Book seats on a flight.
-  Parameters:
-  flight_id, number_of_seats, user_id
+14. process_payment must use a payment_id returned by the MCP Server
+    or explicitly provided by the user.
 
-- get_booking:
-  Retrieve booking details.
-  Parameters:
-  booking_id or booking_reference
+15. Never invent a payment_id.
 
-- get_user_bookings:
-  Retrieve all bookings for a user.
-  Parameter:
-  user_id
+16. A ticket must NEVER be offered as downloadable before payment
+    succeeds.
 
-- cancel_booking:
-  Cancel an existing booking.
-  Parameters:
-  booking_id or booking_reference, user_id
+17. A booking created by create_booking initially has:
 
-- change_booking:
-  Change flight or seats for a booking.
-  Parameters:
-  booking_id, new_flight_id, new_number_of_seats, user_id
+    status = PENDING_PAYMENT
+    payment_status = PENDING
 
+18. Payment flow is:
 
-Allowed intents:
+    CREATE_BOOKING
+          ↓
+    PENDING_PAYMENT
+          ↓
+    CREATE_PAYMENT
+          ↓
+    PROCESS_PAYMENT
+          ↓
+    SUCCESS
+          ↓
+    CONFIRMED
+          ↓
+    TICKET_AVAILABLE
 
-- SEARCH_FLIGHTS
-- GET_FLIGHT_DETAILS
-- CHECK_AVAILABILITY
-- GET_FARE
-- CREATE_BOOKING
-- GET_BOOKING
-- GET_USER_BOOKINGS
-- CANCEL_BOOKING
-- CHANGE_BOOKING
-- UNKNOWN
+19. If payment fails:
 
+    PAYMENT_FAILED
+          ↓
+    booking remains PENDING_PAYMENT
+          ↓
+    ticket remains NOT_AVAILABLE
 
-Tool mapping:
+20. Refund is allowed only for successful payments.
+GENERAL TOOL RULES
+1. Select exactly ONE tool.
+2. Do not call multiple tools.
+3. Do not perform database operations yourself.
+4. Do not calculate prices yourself.
 
-SEARCH_FLIGHTS -> search_flights
-GET_FLIGHT_DETAILS -> get_flight_details
-CHECK_AVAILABILITY -> check_availability
-GET_FARE -> get_fare
-CREATE_BOOKING -> create_booking
-GET_BOOKING -> get_booking
-GET_USER_BOOKINGS -> get_user_bookings
-CANCEL_BOOKING -> cancel_booking
-CHANGE_BOOKING -> change_booking
-UNKNOWN -> null
+5. Do not invent flight information.
 
+6. Do not invent booking information.
 
-Choose a tool only when the user's request clearly requires it.
+7. Do not invent payment information.
 
-If the request is unrelated to flight booking, greetings,
-general conversation, or weather, return:
+8. Use information returned by MCP tools as the source of truth.
 
-intent = UNKNOWN
-tool = null
+9. If required information is missing, do not guess it.
 
+10. If the request cannot be mapped to an available tool, use:
 
-If required information is missing, still identify the intended tool
-and extract whatever information is available.
-
-Do not invent missing values.
-
-Do not guess critical information such as:
-
-- origin
-- destination
-- travel date
-- flight ID
-- booking reference
-- booking ID
-- number of seats
-
-
-Relative Date Resolution:
-
-Current date in India/Kolkata:
-{CURRENT_DATE.strftime("%Y-%m-%d")}
-
-Year:
-{PROJECT_YEAR}
-
-Rules:
-
-- "today" -> today's date
-- "tomorrow" -> tomorrow's date
-- If date is without year, assume year {PROJECT_YEAR}
-
-
-Return ONLY a JSON object:
-
-{{
-    "intent": "INTENT_NAME",
-    "tool": "tool_name_or_null",
-    "parameters": {{
-        ...
+    {{
+      "intent": "UNKNOWN",
+      "tool": "UNKNOWN",
+      "parameters": {{}}
     }}
-}}
 
 
-FEW-SHOT EXAMPLES:
+OUTPUT FORMAT
 
+Return ONLY valid JSON.
 
-Example 1:
+Do not include:
+- Markdown
+- ```json
+- explanations
+- comments
+- additional text
 
-User:
-"Find flights from Chennai to Delhi tomorrow."
-
-Output:
-
-{{
-    "intent": "SEARCH_FLIGHTS",
-    "tool": "search_flights",
-    "parameters": {{
-        "origin": "Chennai",
-        "destination": "Delhi",
-        "date": "tomorrow",
-        "date_raw": "tomorrow",
-        "total_seats": 1
-    }}
-}}
-
-
-Example 2:
-
-User:
-"Are there 3 seats available on flight 6E207?"
-
-Output:
+The response must have exactly this structure:
 
 {{
-    "intent": "CHECK_AVAILABILITY",
-    "tool": "check_availability",
-    "parameters": {{
-        "flight_id": "6E207",
-        "total_seats": 3
-    }}
-}}
-
-
-Example 3:
-
-User:
-"How much does flight 6E207 cost in business class?"
-
-Output:
-
-{{
-    "intent": "GET_FARE",
-    "tool": "get_fare",
-    "parameters": {{
-        "flight_id": "6E207",
-        "travel_class": "business"
-    }}
-}}
-
-
-Example 4:
-
-User:
-"Give me the details of flight 6E207."
-
-Output:
-
-{{
-    "intent": "GET_FLIGHT_DETAILS",
-    "tool": "get_flight_details",
-    "parameters": {{
-        "flight_id": "6E207"
-    }}
-}}
-
-
-Example 5:
-
-User:
-"Book 2 seats on flight 6E207."
-
-Output:
-
-{{
-    "intent": "CREATE_BOOKING",
-    "tool": "create_booking",
-    "parameters": {{
-        "flight_id": "6E207",
-        "number_of_seats": 2
-    }}
-}}
-
-
-Example 6:
-
-User:
-"Cancel booking 12."
-
-Output:
-
-{{
-    "intent": "CANCEL_BOOKING",
-    "tool": "cancel_booking",
-    "parameters": {{
-        "booking_id": 12
-    }}
-}}
-
-
-Example 7:
-
-User:
-"Change booking 15 to flight AI202 for 3 seats."
-
-Output:
-
-{{
-    "intent": "CHANGE_BOOKING",
-    "tool": "change_booking",
-    "parameters": {{
-        "booking_id": 15,
-        "new_flight_id": "AI202",
-        "new_number_of_seats": 3
-    }}
-}}
-
-
-Example 8:
-
-User:
-"Hello, how are you?"
-
-Output:
-
-{{
-    "intent": "UNKNOWN",
-    "tool": null,
-    "parameters": {{}}
+  "intent": "...",
+  "tool": "...",
+  "parameters": {{}}
 }}
 """
-
-
 # ============================================================
 # JSON PARSER
 # ============================================================
-
 def parse_json_response(text: str) -> dict:
     """
     Safely parse JSON returned by the LLM.
@@ -533,12 +450,9 @@ def parse_json_response(text: str) -> dict:
         )
 
     return data
-
-
 # ============================================================
 # CITY NORMALIZATION
 # ============================================================
-
 def normalize_city(city: str) -> str:
     """
     Normalize common city names.
@@ -574,9 +488,9 @@ def normalize_city(city: str) -> str:
 
 
 # ============================================================
+
 # DATE RESOLUTION
 # ============================================================
-
 def resolve_date_string(
     date_str: Optional[str],
 ) -> Optional[str]:
@@ -676,7 +590,6 @@ def resolve_date_string(
 # ============================================================
 # TIME PARSER
 # ============================================================
-
 def parse_time(time_str: Optional[str]):
     """
     Parse HH:MM or HH:MM:SS.
@@ -745,27 +658,19 @@ def format_date_display(
     """
     Convert YYYY-MM-DD into DD-Mon-YYYY.
     """
-
     try:
-
         parsed_date = datetime.strptime(
             date_str,
             "%Y-%m-%d",
         )
-
         return parsed_date.strftime(
             "%d-%b-%Y"
         )
-
     except ValueError:
-
         return date_str
-
-
 # ============================================================
 # MCP RESULT PARSER
 # ============================================================
-
 def parse_mcp_result(result) -> list:
     """
     Convert MCP TextContent into Python objects.
@@ -1784,16 +1689,237 @@ def validate_agent_decision(
         }, None
 
     # ========================================================
+    # CREATE PAYMENT
+    # ========================================================
+
+    if decision.tool == "create_payment":
+        booking_id = params.get("booking_id")
+        amount = params.get("amount")
+        currency = params.get("currency", "INR")
+
+        if booking_id:
+            try:
+                booking_id = int(str(booking_id).replace("BK", "").strip())
+            except ValueError:
+                return {}, {
+                    "status": "validation_error",
+                    "field": "booking_id",
+                    "message": "Booking ID must be a numeric identifier."
+                }
+        else:
+            booking_id = None
+
+        if amount is not None:
+            try:
+                amount = float(amount)
+                if amount <= 0:
+                    return {}, {
+                        "status": "validation_error",
+                        "field": "amount",
+                        "message": "Amount must be greater than 0."
+                    }
+            except (ValueError, TypeError):
+                return {}, {
+                    "status": "validation_error",
+                    "field": "amount",
+                    "message": "Amount must be a valid number."
+                }
+
+        user_id = context_user_id or params.get("user_id") or 1
+        try:
+            user_id = int(user_id)
+        except (ValueError, TypeError):
+            user_id = 1
+
+        return {
+            "booking_id": booking_id,
+            "user_id": user_id,
+            "amount": amount,
+            "currency": str(currency).strip().upper()
+        }, None
+
+    # ========================================================
+    # PROCESS PAYMENT
+    # ========================================================
+
+    if decision.tool == "process_payment":
+        payment_id = params.get("payment_id")
+        booking_id = params.get("booking_id")
+        payment_method = params.get("payment_method")
+
+        if booking_id:
+            try:
+                booking_id = int(str(booking_id).replace("BK", "").strip())
+            except ValueError:
+                return {}, {
+                    "status": "validation_error",
+                    "field": "booking_id",
+                    "message": "Booking ID must be a numeric identifier."
+                }
+        else:
+            booking_id = None
+
+        if not payment_method:
+            return {}, {
+                "status": "needs_information",
+                "missing_fields": ["payment_method"],
+                "message": "Which payment method would you like to use: UPI, CARD, or NET_BANKING?"
+            }
+
+        payment_method_str = str(payment_method).strip().upper()
+        base_method = payment_method_str.split('_')[0]
+        if base_method not in ["UPI", "CARD", "NET_BANKING"]:
+            return {}, {
+                "status": "validation_error",
+                "field": "payment_method",
+                "message": "Invalid payment method. Supported: UPI, CARD, NET_BANKING."
+            }
+
+        user_id = context_user_id or params.get("user_id") or 1
+        try:
+            user_id = int(user_id)
+        except (ValueError, TypeError):
+            user_id = 1
+
+        return {
+            "payment_id": str(payment_id).strip() if payment_id else None,
+            "booking_id": booking_id,
+            "payment_method": payment_method_str,
+            "user_id": user_id
+        }, None
+
+    # ========================================================
+    # VERIFY PAYMENT
+    # ========================================================
+
+    if decision.tool == "verify_payment":
+        payment_id = params.get("payment_id")
+        booking_id = params.get("booking_id")
+        if not payment_id and not booking_id:
+            return {}, {
+                "status": "needs_information",
+                "missing_fields": ["payment_id"],
+                "message": "Please provide the payment ID or booking ID to verify."
+            }
+
+        if booking_id:
+            try:
+                booking_id = int(str(booking_id).replace("BK", "").strip())
+            except ValueError:
+                return {}, {
+                    "status": "validation_error",
+                    "field": "booking_id",
+                    "message": "Booking ID must be a numeric identifier."
+                }
+
+        user_id = context_user_id or params.get("user_id") or 1
+        try:
+            user_id = int(user_id)
+        except (ValueError, TypeError):
+            user_id = 1
+
+        return {
+            "payment_id": str(payment_id).strip() if payment_id else None,
+            "booking_id": booking_id,
+            "user_id": user_id
+        }, None
+
+    # ========================================================
+    # GET PAYMENT
+    # ========================================================
+
+    if decision.tool == "get_payment":
+        payment_id = params.get("payment_id")
+        if not payment_id:
+            return {}, {
+                "status": "needs_information",
+                "missing_fields": ["payment_id"],
+                "message": "Please provide the payment ID."
+            }
+        user_id = context_user_id or params.get("user_id") or 1
+        try:
+            user_id = int(user_id)
+        except (ValueError, TypeError):
+            user_id = 1
+        return {
+            "payment_id": str(payment_id).strip(),
+            "user_id": user_id
+        }, None
+
+    # ========================================================
+    # GET PAYMENT BY BOOKING
+    # ========================================================
+
+    if decision.tool == "get_payment_by_booking":
+        booking_id = params.get("booking_id")
+        if not booking_id:
+            return {}, {
+                "status": "needs_information",
+                "missing_fields": ["booking_id"],
+                "message": "Please provide the booking ID."
+            }
+        try:
+            booking_id = int(str(booking_id).replace("BK", "").strip())
+        except ValueError:
+            return {}, {
+                "status": "validation_error",
+                "field": "booking_id",
+                "message": "Booking ID must be a numeric identifier."
+            }
+        user_id = context_user_id or params.get("user_id") or 1
+        try:
+            user_id = int(user_id)
+        except (ValueError, TypeError):
+            user_id = 1
+        return {
+            "booking_id": booking_id,
+            "user_id": user_id
+        }, None
+
+    # ========================================================
+    # REFUND PAYMENT
+    # ========================================================
+
+    if decision.tool == "refund_payment":
+        payment_id = params.get("payment_id")
+        booking_id = params.get("booking_id")
+        reason = params.get("reason", "Customer request")
+        if not payment_id and not booking_id:
+            return {}, {
+                "status": "needs_information",
+                "missing_fields": ["payment_id"],
+                "message": "Please provide the payment ID or booking ID to refund."
+            }
+        if booking_id:
+            try:
+                booking_id = int(str(booking_id).replace("BK", "").strip())
+            except ValueError:
+                return {}, {
+                    "status": "validation_error",
+                    "field": "booking_id",
+                    "message": "Booking ID must be a numeric identifier."
+                }
+        user_id = context_user_id or params.get("user_id") or 1
+        try:
+            user_id = int(user_id)
+        except (ValueError, TypeError):
+            user_id = 1
+        return {
+            "payment_id": str(payment_id).strip() if payment_id else None,
+            "booking_id": booking_id,
+            "reason": str(reason).strip(),
+            "user_id": user_id
+        }, None
+
+    # ========================================================
     # DEFAULT
     # ========================================================
 
     return params, None
 
-
 # ============================================================
 # FETCH FLIGHTS
 # ============================================================
-
 async def fetch_flights_from_mcp(
     request_data: FlightSearchRequest,
 ) -> list:
@@ -2182,8 +2308,6 @@ def select_recommendation(
     )
 
     return recommended, reason
-
-
 # ============================================================
 # FORMAT FLIGHT RESPONSE
 # ============================================================
@@ -2308,6 +2432,26 @@ def format_flight_response(
 # ============================================================
 # MAIN AGENT EXECUTOR
 # ============================================================
+
+async def resolve_pending_booking_id(user_id: int) -> Optional[int]:
+    """
+    Find user's pending booking from the Booking MCP.
+    Returns:
+        booking_id (int) if there is exactly one pending booking.
+        None if there are none or multiple pending bookings.
+    """
+    try:
+        res = await get_user_bookings_mcp(user_id=user_id)
+        result_data = parse_mcp_result(res)
+        if result_data and isinstance(result_data[0], dict) and result_data[0].get("success"):
+            bookings = result_data[0].get("bookings", [])
+            pending_bookings = [b for b in bookings if b.get("status") == "PENDING_PAYMENT"]
+            if len(pending_bookings) == 1:
+                return pending_bookings[0].get("booking_id")
+    except Exception as exc:
+        logger.error("Failed to resolve pending booking ID: %s", exc)
+    return None
+
 
 async def execute_agent_request(
     user_request: str,
@@ -2448,7 +2592,6 @@ async def execute_agent_request(
         # ----------------------------------------------------
         # SEARCH
         # ----------------------------------------------------
-
         try:
 
             flights = await fetch_flights_from_mcp(
@@ -2601,32 +2744,232 @@ async def execute_agent_request(
     # ========================================================
 
     try:
+        if tool_name in ["create_payment", "process_payment"]:
+            payment_id = validated_params.get("payment_id")
+            booking_id = validated_params.get("booking_id")
+            payment_method = validated_params.get("payment_method") or "CARD"
+            user_id = validated_params.get("user_id", context_user_id or 1)
 
-        mcp_result = await tool_function(
-            **validated_params
-        )
+            # Resolve booking_id from context if not provided
+            if not booking_id and not payment_id:
+                booking_id = await resolve_pending_booking_id(user_id=user_id)
+                if not booking_id:
+                    # Fetch bookings to see why (none or multiple)
+                    res = await TOOL_MAP["get_user_bookings"](user_id=user_id)
+                    res_data = parse_mcp_result(res)
+                    pending_ids = []
+                    if res_data and isinstance(res_data[0], dict) and res_data[0].get("success"):
+                        bookings = res_data[0].get("bookings", [])
+                        pending_ids = [b.get("booking_id") for b in bookings if b.get("status") == "PENDING_PAYMENT"]
+                    
+                    if len(pending_ids) > 1:
+                        return {
+                            "user_request": user_request,
+                            "status": "needs_information",
+                            "missing_fields": ["booking_id"],
+                            "message": f"You have multiple pending bookings: {', '.join(f'BK{bid}' for bid in pending_ids)}. Please specify which booking ID you want to pay for."
+                        }
+                    else:
+                        return {
+                            "user_request": user_request,
+                            "status": "error",
+                            "intent": decision.intent,
+                            "tool": tool_name,
+                            "message": "You do not have any pending bookings that require payment."
+                        }
+
+            # Retrieve booking_id from payment_id if booking_id not given but payment_id is
+            if not booking_id and payment_id:
+                payment_res = await TOOL_MAP["get_payment"](payment_id=payment_id, user_id=user_id)
+                payment_data = parse_mcp_result(payment_res)
+                if payment_data and not payment_data[0].get("error"):
+                    booking_id = payment_data[0].get("booking_id")
+
+            # Check for existing payment
+            payment_payload = None
+            if booking_id:
+                by_booking_res = await TOOL_MAP["get_payment_by_booking"](booking_id=booking_id, user_id=user_id)
+                by_booking_data = parse_mcp_result(by_booking_res)
+                if by_booking_data and not by_booking_data[0].get("error"):
+                    existing_payment = by_booking_data[0]
+                    # If existing payment exists and success, do not create/process another payment
+                    if existing_payment.get("status") == "SUCCESS":
+                        return {
+                            "user_request": user_request,
+                            "status": "success",
+                            "intent": decision.intent,
+                            "tool": tool_name,
+                            "data": existing_payment,
+                            "message": (
+                                f"Payment has already succeeded for booking {booking_id}.\n"
+                                f"Payment ID: {existing_payment.get('payment_id')}\n"
+                                f"Transaction ID: {existing_payment.get('transaction_id')}\n"
+                                f"Amount: ₹{existing_payment.get('amount', 0):,.0f}"
+                            ),
+                        }
+                    # If existing payment is pending/processing, reuse its payment_id
+                    elif existing_payment.get("status") in ["PENDING", "PROCESSING"]:
+                        payment_id = existing_payment.get("payment_id")
+                        payment_payload = existing_payment
+
+            # If no usable payment exists, create a new one
+            if not payment_id and booking_id:
+                # First let's get the booking to verify it exists and is authorized
+                booking_res = await TOOL_MAP["get_booking"](booking_id=booking_id, user_id=user_id)
+                booking_data = parse_mcp_result(booking_res)
+                if not booking_data or booking_data[0].get("error"):
+                    err = booking_data[0] if booking_data else {}
+                    err_msg = err.get("message") or err.get("error") or f"Booking {booking_id} not found."
+                    return {
+                        "user_request": user_request,
+                        "status": "error",
+                        "intent": decision.intent,
+                        "tool": tool_name,
+                        "data": err,
+                        "message": err_msg,
+                    }
+
+                # Now call create_payment MCP
+                create_res = await TOOL_MAP["create_payment"](
+                    booking_id=booking_id,
+                    user_id=user_id,
+                    payment_method=payment_method,
+                )
+                create_data = parse_mcp_result(create_res)
+                if not create_data or create_data[0].get("error"):
+                    err = create_data[0] if create_data else {}
+                    err_msg = err.get("message") or err.get("error") or "Failed to create payment record."
+                    return {
+                        "user_request": user_request,
+                        "status": "error",
+                        "intent": decision.intent,
+                        "tool": tool_name,
+                        "data": err,
+                        "message": err_msg,
+                    }
+                payment_payload = create_data[0]
+                payment_id = payment_payload.get("payment_id")
+
+            if not payment_payload:
+                return {
+                    "user_request": user_request,
+                    "status": "error",
+                    "intent": decision.intent,
+                    "tool": tool_name,
+                    "message": "Failed to retrieve or create payment details."
+                }
+
+            # We DO NOT call process_payment_mcp here anymore!
+            # Instead, return a structured response indicating payment is required.
+            amount = payment_payload.get("amount", 0)
+            currency = payment_payload.get("currency", "INR")
+            method = payment_payload.get("payment_method", payment_method)
+            p_status = payment_payload.get("status", "PENDING")
+            b_status = payment_payload.get("booking_status", "PENDING_PAYMENT")
+            t_status = payment_payload.get("ticket_status", "NOT_AVAILABLE")
+
+            # We format a response that includes redirect info
+            msg = (
+                f"💳 Booking BK{booking_id} requires payment.\n"
+                f"• Payment ID: {payment_id}\n"
+                f"• Amount: {currency} {amount:,.2f}\n"
+                f"• Payment Method: {method}\n"
+                f"• Payment Status: {p_status}\n\n"
+                f"Please click 'Proceed to Payment' to complete the transaction."
+            )
+
+            return {
+                "status": "payment_required",
+                "intent": decision.intent,
+                "booking_id": booking_id,
+                "payment_id": payment_id,
+                "amount": amount,
+                "currency": currency,
+                "payment_method": method,
+                "booking_status": b_status,
+                "payment_status": p_status,
+                "ticket_status": t_status,
+                "redirect_to_payment": True,
+                "message": msg,
+                "data": payment_payload
+            }
+
+        elif tool_name == "verify_payment":
+            payment_id = validated_params.get("payment_id")
+            booking_id = validated_params.get("booking_id")
+            user_id = validated_params.get("user_id", context_user_id or 1)
+
+            if not payment_id and booking_id:
+                by_booking_res = await TOOL_MAP["get_payment_by_booking"](booking_id=booking_id, user_id=user_id)
+                by_booking_data = parse_mcp_result(by_booking_res)
+                if by_booking_data and not by_booking_data[0].get("error"):
+                    payment_id = by_booking_data[0].get("payment_id")
+                else:
+                    err = by_booking_data[0] if by_booking_data else {}
+                    err_msg = err.get("message") or err.get("error") or f"No payment found for booking {booking_id}."
+                    return {
+                        "user_request": user_request,
+                        "status": "error",
+                        "intent": decision.intent,
+                        "tool": tool_name,
+                        "data": err,
+                        "message": err_msg,
+                    }
+
+            mcp_result = await TOOL_MAP["verify_payment"](
+                payment_id=payment_id,
+                 user_id=user_id,
+            )
+
+        elif tool_name == "refund_payment":
+            payment_id = validated_params.get("payment_id")
+            booking_id = validated_params.get("booking_id")
+            reason = validated_params.get("reason", "Customer request")
+            user_id = validated_params.get("user_id", context_user_id or 1)
+
+            if not payment_id and booking_id:
+                by_booking_res = await TOOL_MAP["get_payment_by_booking"](booking_id=booking_id, user_id=user_id)
+                by_booking_data = parse_mcp_result(by_booking_res)
+                if by_booking_data and not by_booking_data[0].get("error"):
+                    payment_id = by_booking_data[0].get("payment_id")
+                else:
+                    err = by_booking_data[0] if by_booking_data else {}
+                    err_msg = err.get("message") or err.get("error") or f"No payment found for booking {booking_id}."
+                    return {
+                        "user_request": user_request,
+                        "status": "error",
+                        "intent": decision.intent,
+                        "tool": tool_name,
+                        "data": err,
+                        "message": err_msg,
+                    }
+
+            mcp_result = await TOOL_MAP["refund_payment"](
+                payment_id=payment_id,
+                user_id=user_id
+            )
+
+        else:
+            mcp_result = await tool_function(
+                **validated_params
+            )
 
         result_data = parse_mcp_result(
             mcp_result
         )
 
     except Exception as exc:
-
         logger.exception(
             "❌ [MCP EXECUTION ERROR] Tool '%s' failed.",
             tool_name,
         )
-
         logger.info("=" * 70)
-
         return {
             "user_request": user_request,
             "status": "error",
             "intent": decision.intent,
             "tool": tool_name,
-            "message": (
-                f"MCP execution failed: {str(exc)}"
-            ),
+            "message": f"MCP execution failed: {str(exc)}",
         }
 
     # ========================================================
@@ -2648,14 +2991,28 @@ async def execute_agent_request(
     # MCP ERROR
     # ========================================================
 
-    if (
-        isinstance(payload, dict)
-        and payload.get("error")
-    ):
+    if isinstance(payload, dict) and payload.get("error"):
+        error_code = payload.get("error", "ERROR")
+        error_msg_map = {
+            "BOOKING_NOT_FOUND": "The specified booking was not found.",
+            "PAYMENT_NOT_FOUND": "Payment record was not found.",
+            "UNAUTHORIZED": "You are not authorized to perform this payment action.",
+            "INVALID_AMOUNT": "Payment amount does not match the actual booking total.",
+            "INVALID_PAYMENT_METHOD": "Invalid payment method. Supported methods are: UPI, CARD, NET_BANKING.",
+            "PAYMENT_ALREADY_COMPLETED": "This payment has already been completed successfully.",
+            "DUPLICATE_PAYMENT": "A payment for this booking is already in progress or completed.",
+            "PAYMENT_NOT_PAID": "Cannot refund a payment that has not succeeded.",
+            "PAYMENT_ALREADY_REFUNDED": "This payment has already been refunded.",
+            "REFUND_FAILED": "Refund operation failed. Please try again or contact support.",
+            "BOOKING_ALREADY_CANCELLED": "Cannot process payment for a cancelled booking.",
+        }
+
+        user_friendly_msg = payload.get("message") or error_msg_map.get(error_code) or f"Operation failed ({error_code})."
 
         logger.warning(
-            "⚠️ [MCP RETURNED ERROR] %s",
-            payload.get("error"),
+            "⚠️ [MCP RETURNED ERROR] %s: %s",
+            error_code,
+            user_friendly_msg,
         )
 
         return {
@@ -2664,18 +3021,15 @@ async def execute_agent_request(
             "intent": decision.intent,
             "tool": tool_name,
             "data": payload,
-            "message": payload.get(
-                "message",
-                payload.get("error"),
-            ),
+            "message": user_friendly_msg,
         }
+
 
     # ========================================================
     # RESPONSE FORMATTING
     # ========================================================
 
     if tool_name == "get_flight_details":
-
         msg = (
             f"✈️ Flight Details for "
             f"{payload.get('flight_id', 'N/A')} "
@@ -2697,18 +3051,8 @@ async def execute_agent_request(
         )
 
     elif tool_name == "check_availability":
-
-        available = payload.get(
-            "available",
-            False,
-        )
-
-        status_str = (
-            "Available"
-            if available
-            else "Not Available"
-        )
-
+        available = payload.get("available", False)
+        status_str = "Available" if available else "Not Available"
         msg = (
             f"💺 Seat Availability for Flight "
             f"{payload.get('flight_id', 'N/A')}:\n"
@@ -2720,7 +3064,6 @@ async def execute_agent_request(
         )
 
     elif tool_name == "get_fare":
-
         msg = (
             f"💳 Fare Quote for Flight "
             f"{payload.get('flight_id', 'N/A')} "
@@ -2738,25 +3081,36 @@ async def execute_agent_request(
         )
 
     elif tool_name == "create_booking":
-
+        booking_status = payload.get('status', 'PENDING_PAYMENT')
+        payment_status = payload.get('payment_status', 'PENDING')
+        booking_id_val = payload.get('booking_id', 'N/A')
         msg = (
-            "🎉 Booking Confirmed!\n"
+            "✈️ Booking Created — Payment Required\n"
             f"• Booking Reference: "
             f"{payload.get('booking_reference', 'N/A')}\n"
-            f"• Booking ID: "
-            f"{payload.get('booking_id', 'N/A')}\n"
+            f"• Booking ID: {booking_id_val}\n"
             f"• Flight ID: "
             f"{payload.get('flight_id', 'N/A')}\n"
             f"• Seats: "
             f"{payload.get('number_of_seats', 1)}\n"
             f"• Total Price: "
             f"₹{payload.get('total_price', 0):,.0f}\n"
-            f"• Status: "
-            f"{payload.get('status', 'CONFIRMED')}"
+            f"• Booking Status: {booking_status}\n"
+            f"• Payment Status: {payment_status}\n\n"
+            "Your seats have been reserved. Please complete payment to CONFIRM your booking.\n"
+            "To pay, say: \"Pay for booking {booking_id_val} using UPI\" (or CARD/NET_BANKING)."
         )
 
     elif tool_name == "get_booking":
-
+        bk_status = payload.get('status', 'N/A')
+        pay_status = payload.get('payment_status', 'N/A')
+        pay_note = ""
+        if bk_status == "PENDING_PAYMENT":
+            bk_id_v = payload.get('id', payload.get('booking_id', ''))
+            pay_note = (
+                f"\n\n⚠️ Payment Required: This booking is not yet confirmed.\n"
+                f"To pay, say: \"Pay for booking {bk_id_v} using UPI\" (or CARD/NET_BANKING)."
+            )
         msg = (
             f"🎫 Booking Details for #"
             f"{payload.get('id', payload.get('booking_id', 'N/A'))}:\n"
@@ -2768,12 +3122,12 @@ async def execute_agent_request(
             f"{payload.get('number_of_seats', 1)}\n"
             f"• Total Price: "
             f"₹{payload.get('total_price', 0):,.0f}\n"
-            f"• Status: "
-            f"{payload.get('status', 'N/A')}"
+            f"• Booking Status: {bk_status}\n"
+            f"• Payment Status: {pay_status}"
+            f"{pay_note}"
         )
 
     elif tool_name == "cancel_booking":
-
         msg = (
             f"🚫 Booking #"
             f"{payload.get('booking_id', 'N/A')} "
@@ -2785,7 +3139,6 @@ async def execute_agent_request(
         )
 
     elif tool_name == "change_booking":
-
         msg = (
             f"🔄 Booking #"
             f"{payload.get('booking_id', 'N/A')} "
@@ -2800,20 +3153,123 @@ async def execute_agent_request(
             f"{payload.get('status', 'CONFIRMED')}"
         )
 
-    else:
+    elif tool_name == "create_payment":
+        msg = (
+            "💳 Payment Created!\n"
+            f"• Payment ID: {payload.get('payment_id', 'N/A')}\n"
+            f"• Booking ID: BK{payload.get('booking_id', 'N/A')}\n"
+            f"• Amount: {payload.get('currency', 'INR')} {payload.get('amount', 0):,.2f}\n"
+            f"• Status: {payload.get('status', 'PENDING')}\n\n"
+            "Which payment method would you like to use: UPI, CARD, or NET_BANKING?"
+        )
 
+    elif tool_name == "process_payment":
+        status_val = payload.get("status")
+        booking_ref = payload.get("booking_id") or validated_params.get("booking_id")
+        booking_label = f" for booking {booking_ref}" if booking_ref else ""
+        booking_status_val = payload.get("booking_status", "")
+
+        if status_val == "SUCCESS":
+            msg = (
+                f"Payment successful{booking_label}.\n"
+                f"Your booking is now CONFIRMED.\n"
+                f"Payment ID: {payload.get('payment_id', 'N/A')}\n"
+                f"Transaction ID: {payload.get('transaction_id', 'N/A')}\n"
+                f"Amount: ₹{payload.get('amount', 0):,.0f}\n"
+                f"Booking Status: {payload.get('booking_status', 'CONFIRMED')}"
+            )
+        elif status_val == "FAILED":
+            msg = (
+                f"Payment failed{booking_label}.\n"
+                f"Your booking remains in PENDING_PAYMENT state. You can retry payment.\n"
+                f"Payment ID: {payload.get('payment_id', 'N/A')}\n"
+                f"Failure Reason: {payload.get('failure_reason', 'Payment was rejected by gateway')}"
+            )
+        elif status_val == "PENDING":
+            msg = (
+                f"Payment is pending{booking_label}.\n"
+                f"Payment ID: {payload.get('payment_id', 'N/A')}"
+            )
+        elif status_val == "PROCESSING":
+            msg = (
+                f"Payment is currently processing{booking_label}.\n"
+                f"Payment ID: {payload.get('payment_id', 'N/A')}"
+            )
+        elif status_val == "REFUNDED":
+            msg = f"Payment {payload.get('payment_id', 'N/A')} has been refunded."
+        else:
+            msg = (
+                f"Payment status: {status_val}\n"
+                f"Payment ID: {payload.get('payment_id', 'N/A')}"
+            )
+    elif tool_name == "verify_payment":
+        status_val = payload.get("status")
+        if status_val == "SUCCESS":
+            msg = (
+                "🔍 Payment Verification: SUCCESS\n"
+                f"• Payment ID: {payload.get('payment_id', 'N/A')}\n"
+                f"• Booking ID: BK{payload.get('booking_id', 'N/A')}\n"
+                f"• Amount: {payload.get('currency', 'INR')} {payload.get('amount', 0):,.2f}\n"
+                f"• Transaction ID: {payload.get('transaction_id', 'N/A')}\n"
+                f"• Method: {payload.get('payment_method', 'N/A')}"
+            )
+        elif status_val == "FAILED":
+            msg = (
+                "🔍 Payment Verification: FAILED\n"
+                f"• Payment ID: {payload.get('payment_id', 'N/A')}\n"
+                f"• Failure Reason: {payload.get('failure_reason', 'Payment failed')}"
+            )
+        elif status_val == "PENDING":
+            msg = (
+                "🔍 Payment Verification: PENDING\n"
+                f"• Payment ID: {payload.get('payment_id', 'N/A')}\n"
+                f"• Amount: {payload.get('currency', 'INR')} {payload.get('amount', 0):,.2f}\n"
+                f"• Payment is awaiting processing."
+            )
+        elif status_val == "REFUNDED":
+            msg = (
+                "🔍 Payment Verification: REFUNDED\n"
+                f"• Payment ID: {payload.get('payment_id', 'N/A')}\n"
+                f"• Refund ID: {payload.get('refund_id', 'N/A')}\n"
+                f"• Amount: {payload.get('currency', 'INR')} {payload.get('amount', 0):,.2f}"
+            )
+        else:
+            msg = (
+                f"🔍 Payment Verification: {status_val}\n"
+                f"• Payment ID: {payload.get('payment_id', 'N/A')}\n"
+                f"• Amount: {payload.get('currency', 'INR')} {payload.get('amount', 0):,.2f}"
+            )
+
+    elif tool_name in ["get_payment", "get_payment_by_booking"]:
+        msg = (
+            "📄 Payment Details:\n"
+            f"• Payment ID: {payload.get('payment_id', 'N/A')}\n"
+            f"• Booking ID: BK{payload.get('booking_id', 'N/A')}\n"
+            f"• Amount: {payload.get('currency', 'INR')} {payload.get('amount', 0):,.2f}\n"
+            f"• Status: {payload.get('status', 'N/A')}\n"
+            f"• Method: {payload.get('payment_method', 'N/A')}\n"
+            f"• Transaction ID: {payload.get('transaction_id', 'N/A') or 'None'}"
+        )
+    elif tool_name == "refund_payment":
+        msg = (
+            "💵 Refund Processed Successfully:\n"
+            f"• Payment ID: {payload.get('payment_id', 'N/A')}\n"
+            f"• Booking ID: BK{payload.get('booking_id', 'N/A')}\n"
+            f"• Refund ID: {payload.get('refund_id', 'N/A')}\n"
+            f"• Amount: ₹{payload.get('amount', 0):,.2f}\n"
+            f"• Status: REFUNDED\n"
+            f"• The corresponding booking has been cancelled and seats released."
+        )
+    else:
         msg = (
             f"Operation {tool_name} "
             "completed successfully."
         )
-
     logger.info(
         "✨ [COMPLETION] Tool '%s' executed successfully.",
         tool_name,
     )
-
     logger.info("=" * 70)
-
     return {
         "user_request": user_request,
         "status": "success",
@@ -2823,11 +3279,69 @@ async def execute_agent_request(
         "message": msg,
     }
 
+# ============================================================
+# CHAT / TICKET HELPERS
+# ============================================================
 
+import re
+from typing import Optional
+
+
+def is_ticket_intent(message: str) -> bool:
+    """Return True when the user is asking for a ticket."""
+
+    if not message:
+        return False
+
+    text = message.strip().lower()
+
+    patterns = [
+        r"\bdownload\b.*\bticket\b",
+        r"\bgive me\b.*\bticket\b",
+        r"\bmy ticket\b",
+        r"\bticket\b.*\bpdf\b",
+        r"\bpdf\b.*\bticket\b",
+        r"\bshow\b.*\bticket\b",
+        r"\bview\b.*\bticket\b",
+        r"\bget\b.*\bticket\b",
+    ]
+
+    return any(re.search(pattern, text) for pattern in patterns)
+
+
+def extract_booking_reference(message: str) -> Optional[str]:
+    """Extract booking reference such as BK2026001."""
+
+    if not message:
+        return None
+
+    match = re.search(
+        r"\b(BK\d+)\b",
+        message.upper(),
+    )
+
+    return match.group(1) if match else None
+
+
+def extract_booking_id(message: str) -> Optional[int]:
+    """Extract numeric booking ID from 'booking 12' or 'booking #12'."""
+
+    if not message:
+        return None
+
+    match = re.search(
+        r"\bbooking\s*#?\s*(\d+)\b",
+        message,
+        re.IGNORECASE,
+    )
+
+    if match:
+        return int(match.group(1))
+
+    return None
 # ============================================================
 # COMPATIBILITY WRAPPER
 # ============================================================
-
 async def search_flights_with_agent(
     user_request: str,
 ) -> dict:

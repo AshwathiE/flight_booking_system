@@ -1,7 +1,8 @@
 from sqlalchemy import Column, Integer, String, DateTime
 from datetime import datetime
 from backend.database.connection import Base
-
+from zoneinfo import ZoneInfo
+from sqlalchemy import Column, DateTime
 
 class User(Base):
     __tablename__ = "users"
@@ -38,8 +39,8 @@ class User(Base):
     )
 
     created_at = Column(
-        DateTime,
-        default=datetime.utcnow,
+        DateTime(timezone=True),
+        default=lambda: datetime.now(ZoneInfo("Asia/Kolkata")),
         nullable=False
     )
 

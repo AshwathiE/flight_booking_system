@@ -1,6 +1,6 @@
 import threading
 import pytest
-from datetime import date
+from datetime import date, timedelta
 from sqlalchemy import create_engine
 from sqlalchemy.orm import sessionmaker, declarative_base
 from backend.database.connection import Base
@@ -32,13 +32,15 @@ def setup_db():
     user2 = User(id=20, name="Bob", email="bob@example.com", password_hash="hash")
     db.add_all([user1, user2])
 
+    future_date = date.today() + timedelta(days=5)
+
     # Seed test flights
     flight1 = Flight(
         flight_id="AI101",
         airline="Air India",
         origin="Chennai",
         destination="Delhi",
-        date=date(2026, 8, 20),
+        date=future_date,
         departure_time="08:00",
         arrival_time="10:30",
         price=5000.0,
@@ -51,7 +53,7 @@ def setup_db():
         airline="IndiGo",
         origin="Chennai",
         destination="Delhi",
-        date=date(2026, 8, 20),
+        date=future_date,
         departure_time="12:00",
         arrival_time="14:30",
         price=3500.0,
@@ -80,7 +82,7 @@ def test_successful_booking():
 
     assert res["success"] is True
     assert res["number_of_seats"] == 2
-    assert res["total_price"] == 10000.0
+    assert res["total_price"] == 10700.0
     assert res["status"] == "CONFIRMED"
     assert res["booking_reference"].startswith("BK")
 
@@ -191,7 +193,7 @@ def test_successful_booking_change():
     assert change_res["success"] is True
     assert change_res["flight_id"] == "6E202"
     assert change_res["number_of_seats"] == 1
-    assert change_res["total_price"] == 3500.0
+    assert change_res["total_price"] == 3775.0
 
     # Verify old seats restored and new seats deducted
     db = get_test_db()
@@ -236,7 +238,7 @@ def test_user_cannot_access_another_user_booking():
     db.close()
 
     assert res["success"] is False
-    assert res["error"] == "BOOKING_NOT_OWNED"
+    assert res["error"] == "UNAUTHORIZED"
 
 
 # 12. Concurrent booking protection

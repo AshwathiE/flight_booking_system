@@ -18,11 +18,13 @@ export default function DashboardLayout({ children }: Props) {
   };
 
   const menuItems = [
-    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
-    { to: '/', label: 'Search Flights', icon: Plane },
-    { to: '/my-bookings', label: 'My Bookings', icon: Briefcase },
-    { to: '/profile', label: 'Profile', icon: User },
+    { to: '/dashboard', label: 'Dashboard', icon: LayoutDashboard, special: false },
+    { to: '/', label: 'Search Flights', icon: Plane, special: false },
+    { to: '/my-bookings', label: 'My Bookings', icon: Briefcase, special: false },
+    { to: '/ai-assistant', label: '✨ AI Assistant', icon: null as any, special: true },
+    { to: '/profile', label: 'Profile', icon: User, special: false },
   ];
+
 
   return (
     <div style={{ display: 'flex', minHeight: 'calc(100vh - 64px)', background: '#f8fafc' }} className="dashboard-container">
@@ -50,6 +52,7 @@ export default function DashboardLayout({ children }: Props) {
           {menuItems.map((item) => {
             const Icon = item.icon;
             const isActive = location.pathname === item.to;
+            const isSpecial = item.special;
             return (
               <Link
                 key={item.to}
@@ -63,29 +66,36 @@ export default function DashboardLayout({ children }: Props) {
                   textDecoration: 'none',
                   fontSize: '14px',
                   fontWeight: 600,
-                  color: isActive ? '#0284c7' : '#64748b',
-                  background: isActive ? '#e0f2fe' : 'transparent',
+                  color: isSpecial
+                    ? (isActive ? '#fff' : '#6366f1')
+                    : (isActive ? '#0284c7' : '#64748b'),
+                  background: isSpecial
+                    ? (isActive ? 'linear-gradient(135deg,#6366f1,#8b5cf6)' : 'rgba(99,102,241,0.08)')
+                    : (isActive ? '#e0f2fe' : 'transparent'),
                   transition: 'all 0.2s',
+                  border: isSpecial ? '1px solid rgba(99,102,241,0.2)' : 'none',
+                  marginTop: isSpecial ? '4px' : '0',
                 }}
                 className={`sidebar-link ${isActive ? 'active' : ''}`}
                 onMouseEnter={(e) => {
                   if (!isActive) {
-                    e.currentTarget.style.color = '#0284c7';
-                    e.currentTarget.style.background = '#f0f9ff';
+                    e.currentTarget.style.color = isSpecial ? '#6366f1' : '#0284c7';
+                    e.currentTarget.style.background = isSpecial ? 'rgba(99,102,241,0.12)' : '#f0f9ff';
                   }
                 }}
                 onMouseLeave={(e) => {
                   if (!isActive) {
-                    e.currentTarget.style.color = '#64748b';
-                    e.currentTarget.style.background = 'transparent';
+                    e.currentTarget.style.color = isSpecial ? '#6366f1' : '#64748b';
+                    e.currentTarget.style.background = isSpecial ? 'rgba(99,102,241,0.08)' : 'transparent';
                   }
                 }}
               >
-                <Icon size={18} />
+                {Icon && <Icon size={18} />}
                 <span>{item.label}</span>
               </Link>
             );
           })}
+
         </div>
 
         <button

@@ -1,5 +1,3 @@
-# backend/models/booking.py
-
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -20,8 +18,8 @@ from backend.database.connection import Base
 IST = ZoneInfo("Asia/Kolkata")
 
 
-class Booking(Base):
-    __tablename__ = "bookings"
+class Payment(Base):
+    __tablename__ = "payments"
 
     # ============================================================
     # PRIMARY KEY
@@ -35,12 +33,30 @@ class Booking(Base):
     )
 
     # ============================================================
-    # BOOKING REFERENCE
+    # PAYMENT ID
+    # ============================================================
+    #
+    # Internal/payment-gateway reference.
+    #
+    # Example:
+    # PAY20260825123456
+    #
     # ============================================================
 
-    booking_reference = Column(
-        String(50),
+    payment_id = Column(
+        String(100),
         unique=True,
+        nullable=False,
+        index=True,
+    )
+
+    # ============================================================
+    # BOOKING
+    # ============================================================
+
+    booking_id = Column(
+        Integer,
+        ForeignKey("bookings.id"),
         nullable=False,
         index=True,
     )
@@ -57,122 +73,90 @@ class Booking(Base):
     )
 
     # ============================================================
-    # FLIGHT
+    # PAYMENT AMOUNT
     # ============================================================
 
-    flight_id = Column(
-        String,
-        ForeignKey("flights.flight_id"),
-        nullable=False,
-        index=True,
-    )
-
-    # ============================================================
-    # SEATS
-    # ============================================================
-
-    number_of_seats = Column(
-        Integer,
-        nullable=False,
-    )
-
-    # ============================================================
-    # FARE
-    # ============================================================
-
-    base_fare = Column(
-        Float,
-        nullable=False,
-        default=0.0,
-    )
-
-    tax_amount = Column(
-        Float,
-        nullable=False,
-        default=0.0,
-    )
-
-    service_fee = Column(
-        Float,
-        nullable=False,
-        default=0.0,
-    )
-
-    total_price = Column(
+    amount = Column(
         Float,
         nullable=False,
     )
 
     # ============================================================
-    # BOOKING STATUS
+    # CURRENCY
     # ============================================================
 
-    status = Column(
+    currency = Column(
+        String(10),
+        nullable=False,
+        default="INR",
+    )
+
+    # ============================================================
+    # PAYMENT METHOD
+    # ============================================================
+    #
+    # Examples:
+    # CARD
+    # UPI
+    # NET_BANKING
+    # WALLET
+    #
+    # ============================================================
+
+    payment_method = Column(
         String(30),
         nullable=False,
-        default="PENDING_PAYMENT",
-        index=True,
     )
-
-    # Possible values:
-    #
-    # PENDING_PAYMENT
-    # CONFIRMED
-    # CANCELLED
 
     # ============================================================
     # PAYMENT STATUS
     # ============================================================
+    #
+    # PENDING
+    # PROCESSING
+    # SUCCESS
+    # FAILED
+    # REFUNDED
+    #
+    # ============================================================
 
-    payment_status = Column(
+    status = Column(
         String(30),
         nullable=False,
         default="PENDING",
         index=True,
     )
 
-    # Possible values:
-    #
-    # PENDING
-    # SUCCESS
-    # FAILED
-    # REFUNDED
-
     # ============================================================
-    # PAYMENT ID
+    # GATEWAY TRANSACTION ID
     # ============================================================
 
-    payment_id = Column(
-        String(100),
+    transaction_id = Column(
+        String(150),
         nullable=True,
         unique=True,
         index=True,
     )
 
     # ============================================================
-    # PAYMENT TIME
+    # REFUND ID
     # ============================================================
 
-    paid_at = Column(
-        DateTime(timezone=True),
+    refund_id = Column(
+        String(150),
         nullable=True,
-    )
-
-    # ============================================================
-    # TICKET STATUS
-    # ============================================================
-
-    ticket_status = Column(
-        String(30),
-        nullable=False,
-        default="NOT_AVAILABLE",
+        unique=True,
         index=True,
     )
 
-    # Possible values:
-    #
-    # NOT_AVAILABLE
-    # AVAILABLE
+    # ============================================================
+    # FAILURE REASON
+    # ============================================================
+
+    failure_reason = Column(
+        String(255),
+        nullable=True,
+    )
 
     # ============================================================
     # CREATED AT
@@ -201,10 +185,10 @@ class Booking(Base):
 
     user = relationship(
         "User",
-        backref="bookings",
+        backref="payments",
     )
 
-    flight = relationship(
-        "Flight",
-        backref="bookings",
+    booking = relationship(
+        "Booking",
+        backref="payments",
     )

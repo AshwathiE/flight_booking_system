@@ -17,7 +17,8 @@ from backend.services.flight_import_service import (
     import_flights_from_records,
 )
 from backend.main import app
-from backend.routes.admin_auth import get_db
+import backend.routes.admin_auth as admin_auth_module
+import backend.services.auth_service as auth_service_module
 
 # ── Test Database Setup ───────────────────────────────────────────────────────
 
@@ -39,53 +40,74 @@ def override_get_db():
         db.close()
 
 
-app.dependency_overrides[get_db] = override_get_db
+app.dependency_overrides[admin_auth_module.get_db] = override_get_db
+app.dependency_overrides[auth_service_module.get_db] = override_get_db
 client = TestClient(app)
 
+
+
+
+
+from unittest.mock import patch
 
 @pytest.fixture(autouse=True)
 def setup_test_db():
     Base.metadata.create_all(bind=test_engine)
     db = TestingSessionLocal()
+    try:
+        # Seed an active admin
+        admin = Admin(
+            id=1,
+            name="Admin Test",
+            email="admin@test.com",
+            password_hash=hash_password("adminpass123"),
+            role="admin",
+            status="active",
+        )
+        # Seed a normal user
+        user = User(
+            id=1,
+            name="User Test",
+            email="user@test.com",
+            password_hash=hash_password("userpass123"),
+        )
+        # Seed an existing flight for duplicate checking
+        existing_flight = Flight(
+            flight_id="EXISTING01",
+            airline="Air India",
+            origin="Chennai",
+            destination="Delhi",
+            date=date(2026, 8, 20),
+            departure_time="08:00",
+            arrival_time="10:30",
+            price=5000.0,
+            travel_class="Economy",
+            total_seats=180,
+            available_seats=180,
+        )
 
-    # Seed an active admin
-    admin = Admin(
-        id=1,
-        name="Admin Test",
-        email="admin@test.com",
-        password_hash=hash_password("adminpass123"),
-        role="admin",
-        status="active",
-    )
-    # Seed a normal user
-    user = User(
-        id=1,
-        name="User Test",
-        email="user@test.com",
-        password_hash=hash_password("userpass123"),
-    )
-    # Seed an existing flight for duplicate checking
-    existing_flight = Flight(
-        flight_id="EXISTING01",
-        airline="Air India",
-        origin="Chennai",
-        destination="Delhi",
-        date=date(2026, 8, 20),
-        departure_time="08:00",
-        arrival_time="10:30",
-        price=5000.0,
-        travel_class="Economy",
-        total_seats=180,
-        available_seats=180,
-    )
+        db.add_all([admin, user, existing_flight])
+        db.commit()
+    finally:
+        db.close()
 
-    db.add_all([admin, user, existing_flight])
-    db.commit()
-    db.close()
+    p1 = patch("backend.routes.admin_auth.SessionLocal", TestingSessionLocal)
+    p2 = patch("backend.services.flight_import_service.SessionLocal", TestingSessionLocal)
+    p3 = patch("backend.services.auth_service.SessionLocal", TestingSessionLocal)
+    p1.start()
+    p2.start()
+    p3.start()
 
-    yield
+    try:
+        yield
+    finally:
+        p1.stop()
+        p2.stop()
+        p3.stop()
+        Base.metadata.drop_all(bind=test_engine)
 
-    Base.metadata.drop_all(bind=test_engine)
+
+
 
 
 # ── Tokens ───────────────────────────────────────────────────────────────────

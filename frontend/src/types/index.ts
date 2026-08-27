@@ -90,3 +90,66 @@ export interface BookingResponse {
   error?: string;
   message?: string;
 }
+
+// ── Payment Types ─────────────────────────────────────────────────────────────
+
+export interface CreatePaymentRequest {
+  booking_id: number;
+  payment_method?: string;
+  currency?: string;
+}
+
+export interface PaymentResponse {
+  success: boolean;
+
+  payment_id: string;
+  booking_id: number;
+  booking_reference?: string | null;
+
+  user_id?: number;
+
+  amount: number;
+  currency: string;
+
+  status:
+  | "PENDING"
+  | "PROCESSING"
+  | "SUCCESS"
+  | "FAILED"
+  | "REFUNDED";
+
+  payment_status?: string | null;
+
+  payment_method?: string | null;
+
+  transaction_id?: string | null;
+  failure_reason?: string | null;
+  refund_id?: string | null;
+
+  booking_status?: string | null;
+  booking_payment_status?: string | null;
+  booking_payment_id?: string | null;
+
+  paid_at?: string | null;
+
+  ticket_status?: "NOT_AVAILABLE" | "AVAILABLE" | string;
+  ticket_download_allowed?: boolean;
+
+  created_at?: string | null;
+  updated_at?: string | null;
+
+  payment_exists?: boolean;
+
+  error?: string;
+  message?: string;
+}
+
+export interface ProcessPaymentRequest {
+  payment_method: string;
+}
+
+export interface RefundPaymentRequest {
+  reason: string;
+}
+
+

@@ -3,7 +3,7 @@ import { Link } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getMyBookingsApi, cancelBookingApi, downloadTicketPdfApi } from '../services/api';
 import { formatDate, formatCurrency } from '../services/flightService';
-import { Search, Calendar, Check, X, FileText, ExternalLink, Ticket, Trash2 } from 'lucide-react';
+import { Search, Calendar, Check, X, FileText, ExternalLink, Ticket, Trash2, CreditCard } from 'lucide-react';
 
 type FilterType = 'ALL' | 'UPCOMING' | 'COMPLETED' | 'CANCELLED';
 
@@ -304,44 +304,74 @@ export default function MyBookings() {
                   <ExternalLink size={14} /> View Details
                 </Link>
 
-                <Link
-                  to={`/ticket/${b.booking_id}`}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '10px 16px',
-                    borderRadius: '10px',
-                    border: '1.5px solid #0284c7',
-                    background: 'white',
-                    color: '#0284c7',
-                    fontSize: '13px',
-                    fontWeight: 700,
-                    textDecoration: 'none',
-                    cursor: 'pointer',
-                  }}
-                >
-                  <Ticket size={14} /> View Ticket
-                </Link>
+                {/* Pay Now — only for PENDING_PAYMENT */}
+                {b.status === 'PENDING_PAYMENT' && (
+                  <Link
+                    to={`/payment`}
+                    state={{ booking: b }}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '10px 16px',
+                      borderRadius: '10px',
+                      border: 'none',
+                      background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
+                      color: 'white',
+                      fontSize: '13px',
+                      fontWeight: 700,
+                      textDecoration: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <CreditCard size={14} /> Pay Now
+                  </Link>
+                )}
 
-                <button
-                  onClick={() => handleDownloadTicket(b.booking_id, b.booking_reference)}
-                  style={{
-                    display: 'inline-flex',
-                    alignItems: 'center',
-                    gap: '6px',
-                    padding: '10px 16px',
-                    borderRadius: '10px',
-                    border: 'none',
-                    background: '#e0f2fe',
-                    color: '#0284c7',
-                    fontSize: '13px',
-                    fontWeight: 700,
-                    cursor: 'pointer',
-                  }}
-                >
-                  <FileText size={14} /> Download Ticket
-                </button>
+                {/* View Ticket — only after payment confirmed */}
+                {b.ticket_download_allowed && (
+                  <Link
+                    to={`/ticket/${b.booking_id}`}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '10px 16px',
+                      borderRadius: '10px',
+                      border: '1.5px solid #0284c7',
+                      background: 'white',
+                      color: '#0284c7',
+                      fontSize: '13px',
+                      fontWeight: 700,
+                      textDecoration: 'none',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <Ticket size={14} /> View Ticket
+                  </Link>
+                )}
+
+                {/* Download Ticket — only after payment confirmed */}
+                {b.ticket_download_allowed && (
+                  <button
+                    onClick={() => handleDownloadTicket(b.booking_id, b.booking_reference)}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: '6px',
+                      padding: '10px 16px',
+                      borderRadius: '10px',
+                      border: 'none',
+                      background: '#e0f2fe',
+                      color: '#0284c7',
+                      fontSize: '13px',
+                      fontWeight: 700,
+                      cursor: 'pointer',
+                    }}
+                  >
+                    <FileText size={14} /> Download Ticket
+                  </button>
+                )}
 
                 {b.computed_status === 'UPCOMING' && (
                   <button

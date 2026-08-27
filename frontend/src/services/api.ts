@@ -3,9 +3,12 @@ import type {
   SearchResponse,
   BookingRequest,
   BookingResponse,
+  CreatePaymentRequest,
+  PaymentResponse,
 } from "../types";
 
-const API_URL = "http://127.0.0.1:8000";
+const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
+
 
 // ── User / Admin Interfaces ──────────────────────────────────────────────────
 
@@ -598,6 +601,212 @@ export async function downloadTicketPdfApi(
         Authorization: `Bearer ${token}`,
       },
       responseType: "blob",
+    }
+  );
+  return response.data;
+}
+
+// ── Chat / AI Assistant API ───────────────────────────────────────────────────
+
+export interface ChatFlightData {
+  flights: any[];
+  recommended_flight: any | null;
+  recommendation_reason: string | null;
+  search_parameters: any | null;
+  count: number;
+}
+
+export interface ChatBookingSuccessData {
+  booking_id: number;
+  booking_reference: string;
+  flight_id: string;
+  number_of_seats: number;
+  total_price: number;
+  status: string;
+  download_url: string | null;
+}
+
+export interface ChatTicketData {
+  booking_id: number;
+  booking_reference: string;
+  flight_id: string;
+  download_url: string;
+  status: string;
+}
+
+export interface ChatResponse {
+  message: string;
+  type: "text" | "flight_results" | "booking_summary" | "booking_success" | "ticket" | "error";
+  data: ChatFlightData | ChatBookingSuccessData | ChatTicketData | any | null;
+  intent: string | null;
+  tool: string | null;
+  status: string | null;
+}
+
+export async function sendChatMessage(
+  message: string,
+  token: string
+): Promise<ChatResponse> {
+  const response = await axios.post<ChatResponse>(
+    `${API_URL}/chat`,
+    { message },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+}
+
+export async function clearChatHistory(token: string): Promise<void> {
+  await axios.delete(`${API_URL}/chat/history`, {
+    headers: {
+      Authorization: `Bearer ${token}`,
+    },
+  });
+}
+
+// ── Payment API ─────────────────────────────────────────────────────────────
+
+/**
+ * Create a PENDING payment for an existing booking.
+ * POST /payments/
+ */
+export async function createPaymentApi(
+  data: CreatePaymentRequest,
+  token: string
+): Promise<PaymentResponse> {
+  const response = await axios.post<PaymentResponse>(
+    `${API_URL}/payments`,
+    {
+      booking_id: data.booking_id,
+      payment_method: data.payment_method || "CARD",
+      currency: data.currency || "INR",
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+
+  return response.data;
+}
+
+/**
+ * Process a payment using a payment method (CARD, UPI, NET_BANKING).
+ * POST /payments/{payment_id}/process
+ */
+export async function processPaymentApi(
+  paymentId: string,
+  paymentMethod: string,
+  token: string
+): Promise<PaymentResponse> {
+  const response = await axios.post<PaymentResponse>(
+    `${API_URL}/payments/${paymentId}/process`,
+    {
+      payment_method: paymentMethod,
+      success: true
+    },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+}
+
+/**
+ * Verify/check the status of a payment.
+ * POST /payments/{payment_id}/verify
+ */
+export async function verifyPaymentApi(
+  paymentId: string,
+  token: string
+): Promise<PaymentResponse> {
+  const response = await axios.post<PaymentResponse>(
+    `${API_URL}/payments/${paymentId}/verify`,
+    {},
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+}
+
+/**
+ * Get payment details by ID.
+ * GET /payments/{payment_id}
+ */
+export async function getPaymentApi(
+  paymentId: string,
+  token: string
+): Promise<PaymentResponse> {
+  const response = await axios.get<PaymentResponse>(
+    `${API_URL}/payments/${paymentId}`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+}
+
+/**
+ * Get payment belonging to a booking.
+ * GET /bookings/{booking_id}/payment
+ */
+export async function getPaymentByBookingApi(
+  bookingId: number,
+  token: string
+): Promise<PaymentResponse> {
+  const response = await axios.get<PaymentResponse>(
+    `${API_URL}/bookings/${bookingId}/payment`,
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    }
+  );
+  return response.data;
+}
+
+/**
+ * Refund a successfully paid payment.
+ * POST /payments/{payment_id}/refund
+ */
+
+export interface RefundPaymentResponse {
+  success: boolean;
+  message?: string;
+  payment_id: string;
+  refund_id: string;
+  booking_id: number;
+  payment_status: "REFUNDED";
+  booking_status: "CANCELLED";
+  ticket_status: "NOT_AVAILABLE";
+  ticket_download_allowed: boolean;
+  error?: string;
+}
+
+
+export async function refundPaymentApi(
+  paymentId: string,
+  reason: string,
+  token: string
+): Promise<PaymentResponse> {
+  const response = await axios.post<PaymentResponse>(
+    `${API_URL}/payments/${paymentId}/refund`,
+    { reason },
+    {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
     }
   );
   return response.data;

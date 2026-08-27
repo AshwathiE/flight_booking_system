@@ -15,13 +15,10 @@ from backend.mcp_client import (
     cancel_booking_mcp,
     change_booking_mcp,
 )
-
 router = APIRouter(
     prefix="/bookings",
     tags=["Bookings"]
 )
-
-
 def parse_mcp_response(mcp_result) -> dict:
     """Helper to parse TextContent JSON returned from MCP client session."""
     for content in getattr(mcp_result, "content", []):
@@ -174,10 +171,12 @@ async def get_booking_ticket_pdf(
                 detail="Booking not found"
             )
             
-        if booking.user_id != current_user.id:
+        from backend.services.payment_service import PaymentService
+        allowed_res = PaymentService.can_download_ticket(db, booking_id, current_user.id)
+        if not allowed_res.get("allowed"):
             raise HTTPException(
-                status_code=status.HTTP_403_FORBIDDEN,
-                detail="You are not authorized to access this booking"
+                status_code=status.HTTP_403_FORBIDDEN if allowed_res.get("error") == "UNAUTHORIZED" else status.HTTP_400_BAD_REQUEST,
+                detail=allowed_res.get("message", "Ticket download not allowed.")
             )
             
         flight = db.query(Flight).filter(Flight.flight_id == booking.flight_id).first()

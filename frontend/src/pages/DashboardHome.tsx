@@ -3,7 +3,7 @@ import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '../context/AuthContext';
 import { getMyBookingsApi, downloadTicketPdfApi } from '../services/api';
 import { formatDate, formatCurrency } from '../services/flightService';
-import { Briefcase, Calendar, CheckCircle2, XCircle, ChevronRight, Search, FileText } from 'lucide-react';
+import { Briefcase, Calendar, CheckCircle2, XCircle, ChevronRight, Search, FileText, CreditCard } from 'lucide-react';
 
 export default function DashboardHome() {
   const { user, userToken } = useAuth();
@@ -244,7 +244,7 @@ export default function DashboardHome() {
                   <span style={{ fontSize: '15px', fontWeight: 800, color: '#0f172a', marginRight: '16px' }}>
                     {formatCurrency(b.total_price)}
                   </span>
-                  
+
                   <Link
                     to={`/booking/${b.booking_id}`}
                     style={{
@@ -263,24 +263,50 @@ export default function DashboardHome() {
                     Details
                   </Link>
 
-                  <button
-                    onClick={() => handleDownloadTicket(b.booking_id, b.booking_reference)}
-                    style={{
-                      padding: '8px 14px',
-                      borderRadius: '8px',
-                      border: 'none',
-                      background: '#e0f2fe',
-                      color: '#0284c7',
-                      fontSize: '13px',
-                      fontWeight: 600,
-                      cursor: 'pointer',
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: '4px',
-                    }}
-                  >
-                    <FileText size={14} /> PDF
-                  </button>
+                  {/* Pay Now — only when payment pending */}
+                  {b.status === 'PENDING_PAYMENT' && (
+                    <Link
+                      to={`/payment`}
+                      state={{ booking: b }}
+                      style={{
+                        padding: '8px 14px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        background: 'linear-gradient(135deg, #0ea5e9, #0284c7)',
+                        color: 'white',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        textDecoration: 'none',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      <CreditCard size={14} /> Pay
+                    </Link>
+                  )}
+
+                  {/* PDF Download — only when ticket is downloadable */}
+                  {b.ticket_download_allowed && (
+                    <button
+                      onClick={() => handleDownloadTicket(b.booking_id, b.booking_reference)}
+                      style={{
+                        padding: '8px 14px',
+                        borderRadius: '8px',
+                        border: 'none',
+                        background: '#e0f2fe',
+                        color: '#0284c7',
+                        fontSize: '13px',
+                        fontWeight: 600,
+                        cursor: 'pointer',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: '4px',
+                      }}
+                    >
+                      <FileText size={14} /> PDF
+                    </button>
+                  )}
                 </div>
               </div>
             ))}
