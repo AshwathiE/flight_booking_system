@@ -1,7 +1,15 @@
 fastapi
 uvicorn
+starlette>=0.37.2,<0.39.0
 pydantic
-mcp
+mcp<2
+sse-starlette<3
 openpyxl
 xlrd
 python-multipart
+SQLAlchemy
+python-jose
+tzdata
+email-validator
+reportlab
+pytest-asyncio

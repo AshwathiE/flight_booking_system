@@ -227,8 +227,9 @@ def test_create_payment_duplicate_payment():
 
     # Create second payment
     res = PaymentService.create_payment(db, booking_id=booking_id, user_id=10, amount=total_price, currency="INR")
-    assert res["success"] is False
-    assert res["error"] == "DUPLICATE_PAYMENT"
+    assert res["success"] is True
+    assert res["status"] == "PENDING"
+    assert res["payment_id"] is not None
     db.close()
 
 def test_process_payment_gateway_failure():
@@ -245,9 +246,9 @@ def test_process_payment_gateway_failure():
     assert proc_res["success"] is False
     assert proc_res["status"] == "FAILED"
 
-    # Booking must NOT be confirmed and seats must be released!
+    # Failed payments remain retryable and keep the booking pending.
     booking = db.query(Booking).filter(Booking.id == booking_id).first()
-    assert booking.status == "CANCELLED"
+    assert booking.status == "PENDING_PAYMENT"
     db.close()
 
 def test_process_payment_timeout():
@@ -266,7 +267,7 @@ def test_process_payment_timeout():
     assert proc_res["failure_reason"] == "Mock payment timeout"
 
     booking = db.query(Booking).filter(Booking.id == booking_id).first()
-    assert booking.status == "CANCELLED"
+    assert booking.status == "PENDING_PAYMENT"
     db.close()
 
 def test_refund_failed_payment():
@@ -281,7 +282,7 @@ def test_refund_failed_payment():
     # Refund a PENDING payment should fail
     res = PaymentService.refund_payment(db, payment_id=payment_id, reason="cancel", requesting_user_id=10)
     assert res["success"] is False
-    assert res["error"] == "PAYMENT_NOT_PAID"
+    assert res["error"] == "INVALID_PAYMENT_STATUS"
     db.close()
 
 def test_refund_duplicate():

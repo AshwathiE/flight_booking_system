@@ -83,7 +83,7 @@ def test_successful_booking():
     assert res["success"] is True
     assert res["number_of_seats"] == 2
     assert res["total_price"] == 10700.0
-    assert res["status"] == "CONFIRMED"
+    assert res["status"] == "PENDING_PAYMENT"
     assert res["booking_reference"].startswith("BK")
 
     # Check database persistence

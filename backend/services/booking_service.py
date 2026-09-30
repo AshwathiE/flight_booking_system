@@ -155,6 +155,7 @@ class BookingService:
         user_id: int,
         flight_id: str,
         number_of_seats: int,
+        status: str | None = None,
     ) -> dict:
         """
         Create a booking and reserve seats.

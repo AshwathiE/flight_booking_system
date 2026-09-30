@@ -1,8 +1,17 @@
 import os
 import asyncio
 import logging
+from contextlib import asynccontextmanager
 from mcp import ClientSession
-from mcp.client.streamable_http import streamable_http_client
+try:
+    from mcp.client.streamable_http import streamable_http_client
+except ImportError:
+    from mcp.client.streamable_http import streamablehttp_client
+
+    @asynccontextmanager
+    async def streamable_http_client(url):
+        async with streamablehttp_client(url) as streams:
+            yield streams[0], streams[1]
 
 logger = logging.getLogger("mcp_client")
 

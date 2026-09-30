@@ -1,4 +1,30 @@
 from datetime import date, datetime, time
+import sys
+import types
+
+# Create lightweight stubs for reportlab modules used in pdf_generator
+pkg = types.ModuleType("reportlab")
+lib = types.ModuleType("reportlab.lib")
+pagesizes = types.ModuleType("reportlab.lib.pagesizes")
+pagesizes.letter = (612, 792)
+platypus = types.ModuleType("reportlab.platypus")
+platypus.SimpleDocTemplate = object
+platypus.Paragraph = object
+platypus.Spacer = object
+platypus.Table = object
+platypus.TableStyle = object
+styles_mod = types.ModuleType("reportlab.lib.styles")
+styles_mod.getSampleStyleSheet = lambda: {"Heading1": None}
+styles_mod.ParagraphStyle = type("ParagraphStyle", (), {})
+colors = types.ModuleType("reportlab.lib.colors")
+colors.HexColor = lambda code: code
+
+sys.modules["reportlab"] = pkg
+sys.modules["reportlab.lib"] = lib
+sys.modules["reportlab.lib.pagesizes"] = pagesizes
+sys.modules["reportlab.platypus"] = platypus
+sys.modules["reportlab.lib.styles"] = styles_mod
+sys.modules["reportlab.lib.colors"] = colors
 
 from backend.utils import pdf_generator
 

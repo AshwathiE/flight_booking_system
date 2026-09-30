@@ -1,4 +1,12 @@
+import sys
+import types
 import pytest
+
+# Provide a lightweight stub for backend.repositories.flight_repository
+repo_mod = types.ModuleType("backend.repositories.flight_repository")
+repo_mod.get_all_flights = lambda: []
+repo_mod.get_flight_by_id = lambda fid: None
+sys.modules["backend.repositories.flight_repository"] = repo_mod
 
 from backend.services import flight_service
 

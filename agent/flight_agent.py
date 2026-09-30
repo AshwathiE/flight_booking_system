@@ -2750,6 +2750,44 @@ async def execute_agent_request(
             payment_method = validated_params.get("payment_method") or "CARD"
             user_id = validated_params.get("user_id", context_user_id or 1)
 
+            if tool_name == "process_payment" and payment_id:
+                process_res = await TOOL_MAP["process_payment"](
+                    payment_id=payment_id,
+                    payment_method=payment_method,
+                )
+                process_data = parse_mcp_result(process_res)
+                payment_data = process_data[0] if process_data else {}
+                if not payment_data:
+                    return {
+                        "user_request": user_request,
+                        "status": "error",
+                        "intent": decision.intent,
+                        "tool": tool_name,
+                        "message": "Payment processing returned no result.",
+                    }
+
+                payment_status = payment_data.get("status")
+                if payment_status == "SUCCESS":
+                    message = (
+                        f"Payment successful. Payment ID: {payment_id}. "
+                        f"Transaction ID: {payment_data.get('transaction_id')}"
+                    )
+                else:
+                    message = (
+                        f"Payment failed for {payment_id}: "
+                        f"{payment_data.get('failure_reason') or payment_data.get('message') or 'Unknown payment error.'}"
+                    )
+
+                return {
+                    "user_request": user_request,
+                    "status": "success",
+                    "intent": decision.intent,
+                    "tool": tool_name,
+                    "payment_id": payment_id,
+                    "data": payment_data,
+                    "message": message,
+                }
+
             # Resolve booking_id from context if not provided
             if not booking_id and not payment_id:
                 booking_id = await resolve_pending_booking_id(user_id=user_id)

@@ -8,6 +8,7 @@ from zoneinfo import ZoneInfo
 from sqlalchemy.orm import Session
 from backend.models.payment import Payment
 from backend.models.booking import Booking
+from backend.models.flight import Flight
 from backend.models.user import User
 
 
@@ -230,6 +231,8 @@ class PaymentService:
         booking_id: int,
         user_id: int,
         payment_method: str = "MOCK",
+        amount: float | None = None,
+        currency: str = "INR",
     ) -> dict:
         """
         Create a payment for a pending booking.
@@ -323,7 +326,7 @@ class PaymentService:
 
                 return {
                     "success": False,
-                    "error": "BOOKING_CANCELLED",
+                    "error": "BOOKING_ALREADY_CANCELLED",
                     "message": (
                         "Payment cannot be created "
                         "for a cancelled booking."
@@ -344,6 +347,19 @@ class PaymentService:
                         "been confirmed."
                     ),
                 }
+
+            if amount is not None:
+                try:
+                    requested_amount = float(amount)
+                except (TypeError, ValueError):
+                    requested_amount = None
+
+                if requested_amount is None or requested_amount != float(booking.total_price):
+                    return {
+                        "success": False,
+                        "error": "INVALID_AMOUNT",
+                        "message": "Payment amount must match the booking total.",
+                    }
 
             # ------------------------------------------------
             # 6. Check successful payment
@@ -443,7 +459,7 @@ class PaymentService:
                booking_id=booking.id,
                user_id=user_id,
                amount=float(booking.total_price),
-               currency="INR",
+               currency=currency,
                payment_method=payment_method,
                status=PAYMENT_PENDING,
             )
@@ -521,8 +537,9 @@ class PaymentService:
     def process_payment(
         db: Session,
         payment_id: str,
-        user_id: int,
+        user_id: int | None = None,
         success: bool = True,
+        payment_method: str | None = None,
     ) -> dict:
         """
         Process a payment.
@@ -568,6 +585,14 @@ class PaymentService:
                         f"not found."
                     ),
                 }
+
+            if user_id is None:
+                user_id = payment.user_id
+
+            if payment_method:
+                method = payment_method.upper()
+                if "FAIL" in method or "TIMEOUT" in method:
+                    success = False
 
             # ------------------------------------------------
             # 2. Authorization
@@ -686,7 +711,7 @@ class PaymentService:
 
                 return {
                     "success": False,
-                    "error": "BOOKING_CANCELLED",
+                    "error": "BOOKING_ALREADY_CANCELLED",
                     "message": (
                         "Payment cannot be processed "
                         "for a cancelled booking."
@@ -702,8 +727,11 @@ class PaymentService:
                 payment.status = PAYMENT_FAILED
 
                 payment.failure_reason = (
-                    "Payment was declined by "
-                    "payment gateway."
+                    "Mock payment timeout"
+                    if payment_method and "TIMEOUT" in payment_method.upper()
+                    else "Mock payment failure"
+                    if payment_method and "FAIL" in payment_method.upper()
+                    else "Payment was declined by payment gateway."
                 )
 
                 # IMPORTANT:
@@ -739,6 +767,8 @@ class PaymentService:
                     "payment_id": (
                         payment.payment_id
                     ),
+                    "status": payment.status,
+                    "failure_reason": payment.failure_reason,
                     "booking_id": booking.id,
                     "payment_status": (
                         payment.status
@@ -845,10 +875,13 @@ class PaymentService:
     def get_payment(
         db: Session,
         payment_id: str,
-        user_id: int,
+        user_id: int | None = None,
+        requesting_user_id: int | None = None,
     ) -> dict:
 
         try:
+
+            user_id = user_id if user_id is not None else requesting_user_id
 
             payment = (
                 db.query(Payment)
@@ -1015,6 +1048,35 @@ class PaymentService:
                 "message": str(exc),
             }
 
+    @staticmethod
+    def get_payment_by_booking(
+        db: Session,
+        booking_id: int,
+        user_id: int | None = None,
+        requesting_user_id: int | None = None,
+    ) -> dict:
+        """Backward-compatible alias for retrieving a booking payment."""
+        user_id = user_id if user_id is not None else requesting_user_id
+        return PaymentService.get_booking_payment(db, booking_id, user_id)
+
+    @staticmethod
+    def verify_payment(
+        db: Session,
+        payment_id: str,
+        user_id: int | None = None,
+    ) -> dict:
+        """Backward-compatible alias for retrieving payment status."""
+        if user_id is None:
+            payment = db.query(Payment).filter(Payment.payment_id == payment_id).first()
+            if not payment:
+                return {
+                    "success": False,
+                    "error": "PAYMENT_NOT_FOUND",
+                    "message": f"Payment {payment_id} not found.",
+                }
+            user_id = payment.user_id
+        return PaymentService.get_payment(db, payment_id, user_id)
+
     # ========================================================
     # REFUND PAYMENT
     # ========================================================
@@ -1023,7 +1085,9 @@ class PaymentService:
     def refund_payment(
         db: Session,
         payment_id: str,
-        user_id: int,
+        user_id: int | None = None,
+        reason: str | None = None,
+        requesting_user_id: int | None = None,
     ) -> dict:
         """
         Refund a successful payment.
@@ -1076,6 +1140,9 @@ class PaymentService:
                         f"not found."
                     ),
                 }
+
+            if user_id is None:
+                user_id = requesting_user_id or payment.user_id
 
             # ------------------------------------------------
             # 2. Authorization
@@ -1190,6 +1257,15 @@ class PaymentService:
                 TICKET_NOT_AVAILABLE
             )
 
+            flight = (
+                db.query(Flight)
+                .filter(Flight.flight_id == booking.flight_id)
+                .with_for_update()
+                .first()
+            )
+            if flight:
+                flight.available_seats += booking.number_of_seats
+
             # ------------------------------------------------
             # Do NOT clear payment_id
             # ------------------------------------------------
@@ -1218,6 +1294,7 @@ class PaymentService:
 
             return {
                 "success": True,
+                "status": payment.status,
                 "message": (
                     "Payment refunded successfully."
                 ),

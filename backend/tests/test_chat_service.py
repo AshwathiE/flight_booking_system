@@ -1,7 +1,31 @@
-from backend.services.chat_service import (
-    detect_response_type,
-    build_response_data,
-)
+import ast
+from pathlib import Path
+
+# Use AST to extract the two pure functions safely without importing module-level
+# dependencies like DB, mcp clients or reportlab.
+src_path = Path("backend/services/chat_service.py")
+src = src_path.read_text(encoding="utf-8")
+tree = ast.parse(src)
+
+def _extract_funcs_ast(names):
+    funcs = {}
+    for node in tree.body:
+        if isinstance(node, ast.FunctionDef) and node.name in names:
+            mod = ast.Module(body=[node], type_ignores=[])
+            ast.fix_missing_locations(mod)
+            code = compile(mod, filename=str(src_path), mode="exec")
+            import typing
+            ns = {"Any": typing.Any, "Optional": typing.Optional}
+            exec(code, ns)
+            funcs[node.name] = ns[node.name]
+    missing = set(names) - set(funcs.keys())
+    if missing:
+        raise RuntimeError(f"functions not found in source: {missing}")
+    return funcs
+
+_f = _extract_funcs_ast(["detect_response_type", "build_response_data"])
+detect_response_type = _f["detect_response_type"]
+build_response_data = _f["build_response_data"]
 
 
 def test_detect_response_type_flight_results():

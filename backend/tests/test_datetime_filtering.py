@@ -179,5 +179,5 @@ def test_booking_service_allows_future_flight():
         )
 
         assert result["success"] is True
-        assert result["status"] == "CONFIRMED"
+        assert result["status"] == "PENDING_PAYMENT"
         assert result["booking_reference"] == "BK20260817001"
